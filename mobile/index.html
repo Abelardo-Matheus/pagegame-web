@@ -26,7 +26,10 @@
     <p class="loading">Carregando…</p>
   </main>
 
-  <button id="fab" class="fab" type="button" data-pagegame-ui>▶ Jogar</button>
+  <div class="fabs" data-pagegame-ui>
+    <button id="fab-room" class="fab fab-room" type="button" aria-label="Procurar nova sala" title="Procurar nova sala">🔀</button>
+    <button id="fab" class="fab" type="button">▶ Jogar</button>
+  </div>
 
   <!-- Menu (gaveta de baixo) -->
   <div id="sheet" class="sheet" data-pagegame-ui hidden>
@@ -57,6 +60,7 @@
       <section id="view-game" hidden>
         <div class="row2">
           <button id="play" class="play" type="button">▶ Jogar</button>
+          <button id="new-room" class="room-btn" type="button" title="Vai para outro artigo com gente jogando (ou um novo, se não tiver ninguém)">🔀 Nova sala</button>
           <button id="restore" class="ghost" type="button">Restaurar</button>
         </div>
         <p id="stats" class="stats">—</p>

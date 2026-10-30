@@ -95,7 +95,7 @@ button { font: inherit; cursor: pointer; }
   font-weight: 800; font-size: 16px; padding: 13px; border-radius: 10px;
 }
 .ghost { background: none; border: 1px solid var(--rule); color: var(--muted); padding: 12px; border-radius: 10px; }
-.row2 { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.row2 { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
 .stats { color: var(--muted); margin: 10px 0 4px; font-size: 13px; }
 .group { border-top: 1px solid var(--rule); padding-top: 12px; margin-top: 12px; display: grid; gap: 8px; }
 .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
@@ -163,3 +163,19 @@ html.playing .toast { top: 70px; }
 /* menu ou busca abertos: o jogo (bicho, tiros, placar, botões) some de cima deles */
 html:has(#sheet:not([hidden])) [data-pagegame],
 html:has(#results:not([hidden])) [data-pagegame] { display: none !important; }
+
+/* Nova sala: ao lado do Jogar (no menu e no botão flutuante) */
+.room-btn {
+  border: 1.5px solid var(--accent); background: none; color: var(--accent);
+  font-weight: 700; padding: 12px 12px; border-radius: 10px; white-space: nowrap;
+}
+.room-btn:disabled, .fab:disabled { opacity: .6; }
+.fabs {
+  position: fixed; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 20;
+  display: flex; align-items: center; gap: 10px;
+}
+.fabs .fab { position: static; }
+.fab-room {
+  width: 50px; height: 50px; padding: 0; font-size: 20px; line-height: 1;
+  background: var(--bg); color: var(--accent); border-color: var(--accent);
+}

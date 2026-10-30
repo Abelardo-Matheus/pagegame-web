@@ -144,12 +144,13 @@
 
   // ---------- Jogo ----------
   let last = null;
-  async function play() {
+  async function play(stay = false) {
     if (!user) { openSheet(); return; }
     closeSheet();
     $('results').hidden = true;
     // antes de começar: se tem gente jogando em outro artigo (e aqui não), vai para lá
-    if (!(last && last.mounted)) {
+    // (stay: acabou de escolher a sala pelo "Nova sala", fica nela)
+    if (!stay && !(last && last.mounted)) {
       const b = await busiest(false);
       if (b && !(current && b.lang === current.lang && b.title === current.title) && othersHere() === 0) {
         await openArticle(b.lang, b.title);
@@ -159,7 +160,37 @@
     setPlaying(true);                                        // esconde a barra antes de o jogo montar os botões
     render(await pgSend('play'));
   }
-  $('fab').addEventListener('click', play);
+  $('fab').addEventListener('click', () => play());
+
+  // Nova sala: sai deste artigo e vai para outro com gente jogando (o mais
+  // cheio, sem contar o atual); se não tiver ninguém, um artigo aleatório.
+  let searchingRoom = false;
+  async function newRoom() {
+    if (!user) { openSheet(); return; }
+    if (searchingRoom) return;
+    searchingRoom = true;
+    const btns = [$('new-room'), $('fab-room')];
+    btns.forEach((b) => { b.disabled = true; });
+    $('new-room').textContent = '🔎 Procurando…';
+    closeSheet();
+    try {
+      const b = await busiest(true, true);
+      if (b) {
+        await openArticle(b.lang, b.title);
+        toast(`${b.count} ${b.count === 1 ? 'pessoa jogando' : 'pessoas jogando'} aqui`);
+      } else {
+        await randomArticle();
+        toast('Ninguém jogando agora: artigo novo');
+      }
+      await play(true);
+    } finally {
+      searchingRoom = false;
+      btns.forEach((b) => { b.disabled = false; });
+      $('new-room').textContent = '🔀 Nova sala';
+    }
+  }
+  $('new-room').addEventListener('click', newRoom);
+  $('fab-room').addEventListener('click', newRoom);
   $('play').addEventListener('click', async () => {
     if (last && last.running) render(await pgSend('pause')); else play();
   });
@@ -172,6 +203,7 @@
     setPlaying(running);
     if (was !== running) trackLobby();
     $('fab').hidden = running;
+    $('fab-room').hidden = running;
     $('fab').textContent = st && st.mounted ? '▶ Continuar' : '▶ Jogar';
     $('play').textContent = running ? '❚❚ Pausar' : (st && st.mounted ? '▶ Continuar' : '▶ Jogar');
     if (!st || !st.mounted) { $('stats').textContent = 'Abra um artigo e toque em Jogar.'; return; }
@@ -342,7 +374,8 @@
     return n;
   }
   // wait = false: não espera a sala geral responder (ex.: ao tocar em Jogar, para não travar)
-  async function busiest(wait = true) {
+  // skipCurrent = true: não conta o artigo aberto agora (botão "Nova sala")
+  async function busiest(wait = true, skipCurrent = false) {
     if (!user) return null;
     await joinLobby();
     if (wait) await lobbySynced();
@@ -351,6 +384,7 @@
       if (id === user.id) continue;
       const m = metas[metas.length - 1];
       if (!m || !m.title || !m.lang) continue;
+      if (skipCurrent && current && m.lang === current.lang && m.title === current.title) continue;
       const k = m.lang + '|' + m.title;
       count.set(k, (count.get(k) || 0) + (m.playing ? 2 : 1));      // quem está jogando pesa mais
     }
@@ -427,7 +461,7 @@
       } catch { break; }                                   // sem internet: usa a lista fixa
     }
     const list = FALLBACK[lang] || FALLBACK.pt;
-    openArticle(lang, list[(Math.random() * list.length) | 0]);
+    return openArticle(lang, list[(Math.random() * list.length) | 0]);
   }
 
   // busca com sugestões

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PageGame",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Um bichinho que segue o mouse e come as palavras, imagens e elementos da página.",
   "permissions": [
     "storage",

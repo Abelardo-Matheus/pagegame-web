@@ -693,14 +693,26 @@
       const txt = node.data.slice(d.starts[w], d.ends[w]).replace(/[^\p{L}\p{N}-]/gu, '') || '???';
       const D = diff();
       const path = pathOf(node);
+      // muitas vezes a palavra sorteada vira um inimigo especial (Atirador,
+      // Corredor, Bomba...), igual aos que nascem da junção de letras
+      const tp = Math.random() < RANDOM_TYPED ? pickRandomType() : null;
+      const T = tp ? WORD_ENEMIES[tp] : null;
+      const hard = D.fire / DIFFICULTY.normal.fire;                  // fácil atira mais devagar, difícil mais rápido
       const m = {
         id: (myId ? myId.slice(0, 8) : 'local') + '-' + (++enemySeq),
-        seed: (Math.random() * 2 ** 31) | 0, txt,
-        life: Math.round(D.life * rand(0.8, 1.2)), fire: D.fire, spd: D.speed,
+        seed: (Math.random() * 2 ** 31) | 0, txt: T ? txt.toUpperCase() : txt,
+        life: Math.round(D.life * rand(0.8, 1.2) * (T ? 1.3 : 1)),
+        fire: T ? (T.fire ? Math.round(T.fire * hard) : 99999) : D.fire,
+        spd: T ? (T.spd || D.speed) : D.speed,
         p: path, s: d.starts[w], e: d.ends[w], a: toAnchor(r[w * 4], r[w * 4 + 1]),
         fs: parseFloat(getComputedStyle(node.parentElement).fontSize) || 16,
       };
-      makeEnemy(m, now);
+      if (tp) m.tp = tp;
+      const e = makeEnemy(m, now);
+      if (e && T) {
+        spawnBurst(e);
+        floaters.push({ text: `${T.nome}!`, x: e.x + e.w / 2, y: e.y - 18, life: 1.4, good: false });
+      }
       netEvent({ k: 'en', ...m });
       return true;
     }
@@ -740,7 +752,7 @@
       while (enemies.length) retireEnemy(enemies.pop());
       bullets.length = 0;
     } else if (!scan && now >= nextSpawn) {
-      if (isHost() && enemies.length < D.max) spawnEnemy(now);
+      if (isHost() && enemies.filter((e) => !e.msg.tr).length < D.max) spawnEnemy(now);   // as da junção de letras têm limite próprio
       nextSpawn = now + rand(D.spawn[0], D.spawn[1]);
     }
 
@@ -963,6 +975,16 @@
   // Palavras transformadas são raras: no máximo 3 vivas, uma a cada 12 s por
   // jogador, e as letras só são "puxadas" de longe de vez em quando.
   const TRANSFORM_MAX = 3;
+  // Palavras sorteadas (spawnEnemy) também viram esses inimigos especiais:
+  // RANDOM_TYPED das vezes ganham um tipo; o resto é a inimiga vermelha comum.
+  const RANDOM_TYPED = 0.65;
+  const RANDOM_WEIGHTS = { arma: 3, rapido: 3, gelo: 2, fogo: 2, laser: 2, ninja: 2, vento: 2, bomba: 2, escudo: 2, chefe: 1 };
+  function pickRandomType() {
+    const all = Object.entries(RANDOM_WEIGHTS);
+    let r = Math.random() * all.reduce((a, [, n]) => a + n, 0);
+    for (const [k, n] of all) { if ((r -= n) < 0) return k; }
+    return 'arma';
+  }
   const TRANSFORM_COOLDOWN = 12000;
   const PULL_CHANCE = 0.12;           // chance de um buraco puxar a letra que falta
   const PULL_COOLDOWN = 6000;
@@ -1616,7 +1638,7 @@
     if (m.k === 'en') {
       if (S.enemies && hasHighlight) {
         const e = makeEnemy(m, now);
-        if (e && m.tr) spawnBurst(e);
+        if (e && m.tp) spawnBurst(e);                  // inimigo especial (sorteado ou da junção) aparece com explosão
       }
     } else if (m.k === 'ed') {
       const i = enemies.findIndex((e) => e.id === m.id);
