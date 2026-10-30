@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <svg class="bug" viewBox="0 0 64 24" aria-hidden="true">
+      <g stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round">
+        <path d="M14 12 l-3 -8 M14 12 l-3 8 M22 12 l-2 -8 M22 12 l-2 8 M30 12 l-1 -8 M30 12 l-1 8 M38 12 l0 -8 M38 12 l0 8"/>
+        <path d="M52 9 q6 -6 10 -7 M52 15 q6 6 10 7"/>
+      </g>
+      <g class="fill" stroke="#2b1d00" stroke-width="1.2">
+        <rect x="8" y="8" width="7" height="8"/><rect x="16" y="7.5" width="7" height="9"/>
+        <rect x="24" y="7" width="7" height="10"/><rect x="32" y="7" width="7" height="10"/>
+        <ellipse cx="46" cy="12" rx="7" ry="6"/>
+      </g>
+    </svg>
+    <h1>PageGame</h1>
+    <div id="who" class="who" hidden>
+      <span id="username"></span>
+      <button id="logout" class="link" type="button">Sair</button>
+    </div>
+  </header>
+
+  <!-- Aviso: tem gente jogando nesta página -->
+  <div id="players-banner" class="players-banner" role="status" hidden>
+    <span class="dot" aria-hidden="true"></span>
+    <div>
+      <b id="players-count"></b>
+      <span id="players-names"></span>
+    </div>
+  </div>
+
+  <!-- Supabase ainda não configurado -->
+  <section id="view-config" class="view" hidden>
+    <p class="note">Falta conectar o banco de dados. Preencha <code>config.js</code> com a URL e a chave anon do seu projeto Supabase e recarregue a extensão.</p>
+  </section>
+
+  <!-- Entrar / criar conta -->
+  <section id="view-auth" class="view" hidden>
+    <div class="tabs" role="tablist">
+      <button id="tab-login" role="tab" aria-selected="true" type="button">Entrar</button>
+      <button id="tab-signup" role="tab" aria-selected="false" type="button">Criar conta</button>
+    </div>
+    <form id="auth-form" novalidate>
+      <label class="field" id="field-username" hidden>
+        <span>Nome de usuário</span>
+        <input id="in-username" autocomplete="username" maxlength="20" placeholder="3 a 20 letras, números ou _">
+      </label>
+      <label class="field">
+        <span>E-mail</span>
+        <input id="in-email" type="email" autocomplete="email" required>
+      </label>
+      <label class="field">
+        <span>Senha</span>
+        <input id="in-password" type="password" autocomplete="current-password" minlength="6" required>
+      </label>
+      <button id="auth-submit" class="play" type="submit">Entrar</button>
+    </form>
+    <p id="auth-msg" class="msg" role="status" hidden></p>
+    <p class="note">Entre na sua conta para jogar.</p>
+  </section>
+
+  <!-- Jogo -->
+  <section id="view-game" class="view" hidden>
+<div class="controls">
+      <button id="play" class="play">▶ Jogar nesta página</button>
+      <button id="restore" class="ghost" title="Devolve tudo o que foi comido">Restaurar página</button>
+    </div>
+
+    <p id="error" class="error" hidden></p>
+
+    <section class="stats" aria-live="polite">
+      <div><span>Na página</span><b id="found">—</b></div>
+      <div><span>Comido</span><b id="eaten">—</b></div>
+      <div><span>Pontos aqui</span><b id="points">—</b></div>
+      <div><span>Scan</span><b id="scan">—</b></div>
+      <div><span>Multiplayer</span><b id="players">—</b></div>
+      <div><span>Sua conta</span><b id="account">—</b></div>
+    </section>
+
+    <section class="inventory">
+      <h2 class="sub">Armas <small>(atiram sozinhas no alvo mais perto)</small></h2>
+      <div id="inventory"><p class="inv-note">Carregando…</p></div>
+    </section>
+
+    <section class="settings">
+      <fieldset class="row">
+        <legend>Personagem</legend>
+        <div class="segmented" id="character" role="group" aria-label="Personagem">
+          <button type="button" data-char="bicho">🐛 Bicho</button>
+          <button type="button" data-char="saltador">🎯 Saltador</button>
+        </div>
+        <p class="hint" id="char-hint"></p>
+      </fieldset>
+
+      <label class="row">
+        <span>Velocidade <output id="speedOut"></output></span>
+        <input type="range" id="speed" min="0.5" max="2.5" step="0.1">
+      </label>
+      <label class="row">
+        <span>Crescimento <output id="growthOut"></output></span>
+        <input type="range" id="growth" min="0.25" max="3" step="0.25">
+      </label>
+      <label class="row">
+        <span>Tamanho máximo <output id="maxSegmentsOut"></output></span>
+        <input type="range" id="maxSegments" min="15" max="150" step="5">
+      </label>
+
+      <fieldset class="row">
+        <legend>Cor do bicho</legend>
+        <div class="swatches" id="colors">
+          <button data-color="#ffd23f" style="--c:#ffd23f" aria-label="Amarelo"></button>
+          <button data-color="#7ee081" style="--c:#7ee081" aria-label="Verde"></button>
+          <button data-color="#6cb6ff" style="--c:#6cb6ff" aria-label="Azul"></button>
+          <button data-color="#ff7a7a" style="--c:#ff7a7a" aria-label="Vermelho"></button>
+          <button data-color="#d9a7ff" style="--c:#d9a7ff" aria-label="Lilás"></button>
+        </div>
+      </fieldset>
+
+      <fieldset class="row">
+        <legend>Palavras inimigas</legend>
+        <label class="check"><input type="checkbox" id="enemies"> Palavras ganham vida e atiram no mouse</label>
+        <div class="segmented" id="difficulty" role="group" aria-label="Dificuldade">
+          <button type="button" data-level="facil">Fácil</button>
+          <button type="button" data-level="normal">Normal</button>
+          <button type="button" data-level="dificil">Difícil</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="row">
+        <legend>O que ele pode comer</legend>
+        <label class="check"><input type="checkbox" id="eatWords"> Letras</label>
+        <label class="check"><input type="checkbox" id="eatImages"> Imagens e ícones</label>
+        <label class="check"><input type="checkbox" id="eatObjects"> Vídeos, campos e embeds</label>
+      </fieldset>
+
+      <label class="check"><input type="checkbox" id="showLabels"> Mostrar letras comidas no corpo</label>
+      <label class="check"><input type="checkbox" id="multiplayer"> Multiplayer: ver quem está na mesma página</label>
+      <label class="check"><input type="checkbox" id="peerBadge"> Avisar no ícone quando tiver gente jogando na página</label>
+    </section>
+
+      </section>
+
+  <footer id="footer" hidden>Esc pausa e continua direto na página.</footer>
+  <script src="config.js"></script>
+  <script src="lib/supabase.js"></script>
+  <script src="inventory.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

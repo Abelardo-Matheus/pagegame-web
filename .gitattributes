@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# o instalador precisa ficar com CRLF (Windows) tambem no arquivo "raw" do GitHub
+*.cmd -text
