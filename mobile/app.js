@@ -36,7 +36,7 @@
     $('multiplayer').checked = settings.multiplayer;
     $('char-hint').textContent = settings.character === 'saltador'
       ? 'Cai do topo e pula nas letras. Botões: ◀ ▶ andam, ⤒ pula, ⤓ desce, ⚡ dash, 💣 granada. A arma atira sozinha (primeiro nos jogadores).'
-      : 'Segue o seu dedo, come as letras e cresce. ⚡ dá um dash. A arma atira sozinha (primeiro nos jogadores).';
+      : 'Anda sempre para a frente: segure ◀ ou ▶ para virar. Come as letras e cresce. ⚡ dá um dash. A arma atira sozinha (primeiro nos jogadores).';
   }
   const pick = (id, key, attr) => $(id).addEventListener('click', (e) => {
     const b = e.target.closest('button');

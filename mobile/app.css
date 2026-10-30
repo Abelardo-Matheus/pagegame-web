@@ -159,3 +159,7 @@ html.playing .toast { top: 70px; }
 .inv-row button { border: 1px solid var(--rule); background: none; color: var(--ink); border-radius: 10px; padding: 9px 12px; white-space: nowrap; }
 .inv-row button:disabled { opacity: .45; }
 .inv-on { color: var(--accent); font-weight: 700; white-space: nowrap; }
+
+/* menu ou busca abertos: o jogo (bicho, tiros, placar, botões) some de cima deles */
+html:has(#sheet:not([hidden])) [data-pagegame],
+html:has(#results:not([hidden])) [data-pagegame] { display: none !important; }

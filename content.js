@@ -1787,14 +1787,17 @@
   }
 
   // Cabeça na borda de cima/baixo com o mouse lá também: a página rola.
-  function edgeScroll(head, H) {
-    if (!mouseIn) return;
+  function edgeScroll(head, H, steer = false) {
+    if (!mouseIn && !steer) return;
     const se = document.scrollingElement || document.documentElement;
     const maxY = Math.max(0, se.scrollHeight - H);
+    // volante (celular): rola se a cabeça está na borda indo para aquele lado
+    const goDown = steer ? Math.sin(heading) > 0.15 : mouse.y > H - EDGE;
+    const goUp = steer ? Math.sin(heading) < -0.15 : mouse.y < EDGE;
     let want = 0;
-    if (head.y > H - EDGE && mouse.y > H - EDGE && scrollY < maxY - 0.5) {
+    if (head.y > H - EDGE && goDown && scrollY < maxY - 0.5) {
       want = Math.ceil(2 + clamp((head.y - (H - EDGE)) / EDGE, 0, 1) * MAX_SCROLL * S.speed);
-    } else if (head.y < EDGE && mouse.y < EDGE && scrollY > 0.5) {
+    } else if (head.y < EDGE && goUp && scrollY > 0.5) {
       want = -Math.ceil(2 + clamp((EDGE - head.y) / EDGE, 0, 1) * MAX_SCROLL * S.speed);
     }
     if (!want) return;
@@ -2349,6 +2352,10 @@
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { wormDash(); e.preventDefault(); }
   }, { capture: true });
 
+  // volante do bicho no celular: ◀ ▶ seguram a curva
+  const steerKeys = new Set();
+  const STEER_TURN = 0.075;                                         // rad por quadro (~4,5 rad/s)
+
   // movimento do bicho (personagem padrão)
   function updateWorm() {
     const head = segs[0];
@@ -2368,8 +2375,13 @@
 
     const slowK = performance.now() < slowUntil ? 0.45 : 1;        // gelo
     const maxSpeed = 3.4 * S.speed * (0.8 + scale() * 0.3) * slowK;
+    const steer = isTouch();                                        // celular: sempre anda para a frente, ◀ ▶ viram
     let wanted = 0;
-    if (!resting) {
+    if (steer) {
+      resting = false;
+      heading = norm(heading + STEER_TURN * ((steerKeys.has('right') ? 1 : 0) - (steerKeys.has('left') ? 1 : 0)));
+      wanted = maxSpeed;
+    } else if (!resting) {
       const diff = norm(Math.atan2(dy, dx) - heading);
       const turn = 0.14 + 0.12 * clamp(1 - dist / 150, 0, 1);       // vira mais rápido perto do alvo
       heading = norm(heading + clamp(diff, -turn, turn));
@@ -2379,7 +2391,7 @@
     }
     speedNow += (wanted - speedNow) * 0.15;
     if (performance.now() < WD.until) {                             // dash: vira direto para o alvo e dispara
-      if (dist > 4) heading = Math.atan2(dy, dx);
+      if (dist > 4 && !steer) heading = Math.atan2(dy, dx);    // no volante o dash vai para a frente
       speedNow = Math.max(speedNow, 3.4 * S.speed * 3.4);
       WD.trail.push({ x: head.x + scrollX, y: head.y + scrollY, born: performance.now() });
     }
@@ -2388,13 +2400,13 @@
     head.y += Math.sin(heading + wiggle) * speedNow + pushVY;
     pushVX *= 0.88; pushVY *= 0.88;                                  // rajada da ventania perde força
 
-    // paredes laterais
-    if (head.x < R) { head.x = R; if (Math.cos(heading) < 0) bump(head, false); }
-    else if (head.x > W - R) { head.x = W - R; if (Math.cos(heading) > 0) bump(head, false); }
-    edgeScroll(head, H);
+    // paredes laterais (no volante ele bate e volta, para não ficar preso andando contra a parede)
+    if (head.x < R) { head.x = R; if (Math.cos(heading) < 0) { bump(head, false); if (steer) heading = norm(Math.PI - heading); } }
+    else if (head.x > W - R) { head.x = W - R; if (Math.cos(heading) > 0) { bump(head, false); if (steer) heading = norm(Math.PI - heading); } }
+    edgeScroll(head, H, steer);
     // topo e fundo (quando a página não rola mais)
-    if (head.y < R) { head.y = R; if (Math.sin(heading) < 0) bump(head, true); }
-    else if (head.y > H - R) { head.y = H - R; if (Math.sin(heading) > 0) bump(head, true); }
+    if (head.y < R) { head.y = R; if (Math.sin(heading) < 0) { bump(head, true); if (steer) heading = norm(-heading); } }
+    else if (head.y > H - R) { head.y = H - R; if (Math.sin(heading) > 0) { bump(head, true); if (steer) heading = norm(-heading); } }
 
     const gap = 7 * scale();
     for (let i = 1; i < segs.length; i++) {
@@ -3037,7 +3049,7 @@
   // CELULAR / TOQUE
   // Em tela de toque aparecem controles na tela:
   //  - botão de pausar (canto de cima)
-  //  - bicho: o bicho segue o dedo
+  //  - bicho: anda sempre para a frente; ◀ ▶ viram, ⚡ dá o dash
   //  - saltador: ◀ ▶ à esquerda; pular, descer, dash e quebrar à direita;
   //    tocar/segurar no resto da tela mira e atira
   // Elementos com data-pagegame-ui (o menu do app) não são comidos nem
@@ -3097,10 +3109,15 @@
     tbtn('💣', 'right:14px;bottom:92px', () => grenadeButton()),
     tbtn('⚡', 'right:14px;bottom:22px', () => dashButton()),
   );
-  // bicho no celular: só o dash (ele já segue o dedo)
+  // bicho no celular: anda sempre para a frente; ◀ vira para a esquerda, ▶ para a direita; ⚡ dash
+  const steerHold = (k) => [() => steerKeys.add(k), () => steerKeys.delete(k)];
   const wormPad = document.createElement('div');
   wormPad.style.cssText = 'all:initial;position:absolute;inset:0;pointer-events:none';
-  wormPad.append(tbtn('⚡', 'right:18px;bottom:26px;width:66px;height:66px;font-size:24px', () => wormDash()));
+  wormPad.append(
+    tbtn('◀', 'left:16px;bottom:24px;width:70px;height:70px;font-size:26px', ...steerHold('left')),
+    tbtn('▶', 'right:16px;bottom:24px;width:70px;height:70px;font-size:26px', ...steerHold('right')),
+    tbtn('⚡', 'right:28px;bottom:108px;width:52px;height:52px;font-size:20px', () => wormDash()),
+  );
   touchUI.append(pauseBtn, pad, wormPad);
 
   function syncTouchUI() {
@@ -3192,7 +3209,7 @@
     if (raf) cancelAnimationFrame(raf);
     raf = null;
     observer.disconnect();
-    jkeys.clear(); J.shooting = false;
+    jkeys.clear(); steerKeys.clear(); J.shooting = false;
     lockTouch(false);
     syncTouchUI();
     updateHud();
