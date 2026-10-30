@@ -1,4 +1,4 @@
-// PageGame v0.17: o bichinho come palavras, imagens e elementos de qualquer página.
+// PageGame v0.19: o bichinho come palavras, imagens e elementos de qualquer página.
 //
 // Como o scan fica leve mesmo em páginas enormes:
 //  1. Nada roda até o Play: o script só é injetado na aba quando você aperta Play.
@@ -1643,6 +1643,15 @@
       applyFills(m.n);
     } else if (m.k === 'obj') {
       if (typeof m.p === 'string') applyObject(m.p);
+    } else if (m.k === 'pw' && Array.isArray(m.a)) {               // tiros de outro jogador (só visual)
+      const p = peers.get(m.id);
+      if (p) for (const a of m.a.slice(0, 12)) spawnShots(p.segs[0].x, p.segs[0].y, +a || 0, WEAPONS[m.w] ? m.w : 'pistola', false);
+    } else if (m.k === 'ph') {                                        // um tiro de outro jogador me acertou
+      if (m.v === myId) {
+        const o = gunPos();
+        hurtMe(now, o.x, o.y);
+        sendMyPosition(true);
+      }
     } else if (m.k === 'pick') {
       const i = loose.findIndex((l) => l.id === m.id);
       if (i >= 0) loose.splice(i, 1);
@@ -1956,12 +1965,6 @@
     // mira e tiros
     const cx = J.x, cy = J.y - JH / 2;
     J.aim = Math.atan2(mouse.y + scrollY - cy, mouse.x + scrollX - cx);
-    if (J.shooting && now - J.lastShot > 170) {
-      J.lastShot = now;
-      const spd = 12;
-      shots.push({ x: cx + Math.cos(J.aim) * 16, y: cy + Math.sin(J.aim) * 16,
-                   vx: Math.cos(J.aim) * spd, vy: Math.sin(J.aim) * spd, born: now });
-    }
     // o resto do jogo (partículas, rede, inimigos) usa segs[0] = centro do saltador na tela
     segs.length = 1;
     segs[0].x = J.x - scrollX; segs[0].y = J.y - scrollY - JH / 2;
@@ -2034,28 +2037,28 @@
   }
 
   // explosão: quebra as letras num círculo em volta de (cx, cy)
-  function breakCircle(cx, cy) {
+  function breakCircle(cx, cy, R = SLAM_R) {
     const now = performance.now();
-    slams.push({ x: cx, y: cy, born: now });
+    slams.push({ x: cx, y: cy, born: now, r: R });
     buzz(25);
-    const ix = index, R2 = SLAM_R * SLAM_R;
+    const ix = index, R2 = R * R;
     stamp++;
-    for (let gx = Math.floor((cx - SLAM_R) / CELL); gx <= Math.floor((cx + SLAM_R) / CELL); gx++) {
-      for (let gy = Math.floor((cy - SLAM_R) / CELL); gy <= Math.floor((cy + SLAM_R) / CELL); gy++) {
+    for (let gx = Math.floor((cx - R) / CELL); gx <= Math.floor((cx + R) / CELL); gx++) {
+      for (let gy = Math.floor((cy - R) / CELL); gy <= Math.floor((cy + R) / CELL); gy++) {
         const list = ix.grid.get(cellKey(gx, gy));
         if (!list) continue;
         for (const id of list) {
           if (id >= OBJ || chunkStamp[id] === stamp) continue;
           chunkStamp[id] = stamp;
           const r = ix.rects;
-          if (!circleHitsRect(cx, cy, SLAM_R, r[id * 4], r[id * 4 + 1], r[id * 4 + 2], r[id * 4 + 3])) continue;
+          if (!circleHitsRect(cx, cy, R, r[id * 4], r[id * 4 + 1], r[id * 4 + 2], r[id * 4 + 3])) continue;
           const node = ix.nodes[id];
           if (!node.isConnected || !S.eatWords || !hasHighlight) continue;
           const d = wordsOf(node);
           if (!d.left || !d.rects) continue;
           for (let w = 0; w < d.starts.length; w++) {
             const wr = d.rects;
-            if (!d.wl[w] || !wr[w * 4 + 2] || !circleHitsRect(cx, cy, SLAM_R, wr[w * 4], wr[w * 4 + 1], wr[w * 4 + 2], wr[w * 4 + 3])) continue;
+            if (!d.wl[w] || !wr[w * 4 + 2] || !circleHitsRect(cx, cy, R, wr[w * 4], wr[w * 4 + 1], wr[w * 4 + 2], wr[w * 4 + 3])) continue;
             const L = lettersOf(node, d, w), lr = L.rects;
             let changed = false;
             for (let k = 0; k < L.offs.length; k++) {
@@ -2075,7 +2078,7 @@
     // a onda também machuca os inimigos perto
     for (let i = enemies.length - 1; i >= 0; i--) {
       const e = enemies[i];
-      if (circleHitsRect(cx, cy, SLAM_R, e.x, e.y, e.w, e.h)) damageEnemy(e, i, now);
+      if (circleHitsRect(cx, cy, R, e.x, e.y, e.w, e.h)) damageEnemy(e, i, now);
     }
   }
 
@@ -2096,6 +2099,98 @@
     return true;
   }
 
+  // =====================================================================
+  // ARMAS: o bicho e o saltador atiram SOZINHOS no alvo mais perto.
+  // Prioridade: outros jogadores (dentro do alcance); se não tiver nenhum,
+  // as palavras inimigas. A arma equipada vem do inventário (loja no menu);
+  // todo mundo começa com a pistola.
+  // Rede: quem atira avisa a sala só a direção dos tiros (em lote a cada
+  // 250 ms) para os outros verem; quem acerta um jogador manda {k:'ph'}.
+  // =====================================================================
+  const WEAPONS = {
+    pistola:      { nome: 'Pistola',      icon: '🔫', cad: 450,  spd: 11, n: 1, spread: 0,    range: 620, cor: '#ffd23f' },
+    metralhadora: { nome: 'Metralhadora', icon: '💨', cad: 140,  spd: 12, n: 1, spread: 0.12, range: 540, cor: '#ffb020' },
+    espingarda:   { nome: 'Espingarda',   icon: '💥', cad: 900,  spd: 10, n: 5, spread: 0.55, range: 340, cor: '#ff7a3d', life: 620 },
+    laser:        { nome: 'Laser',        icon: '🔆', cad: 650,  spd: 22, n: 1, spread: 0,    range: 820, cor: '#ff3dd6', pierce: true },
+    bazuca:       { nome: 'Bazuca',       icon: '🚀', cad: 1400, spd: 7.5, n: 1, spread: 0,   range: 680, cor: '#9be15d', boom: 55 },
+  };
+  let weaponId = 'pistola';
+  const weapon = () => WEAPONS[weaponId] || WEAPONS.pistola;
+  chrome.storage.local.get('pgWeapon', (r) => { if (r && WEAPONS[r.pgWeapon]) weaponId = r.pgWeapon; });
+  chrome.storage.onChanged.addListener((c, area) => {
+    if (area === 'local' && c.pgWeapon && WEAPONS[c.pgWeapon.newValue]) weaponId = c.pgWeapon.newValue;
+  });
+
+  let lastAuto = 0;
+  const shotBuf = [];                 // direções dos meus tiros, para a sala
+  let shotFlushAt = 0;
+
+  // de onde sai o tiro: centro do saltador ou cabeça do bicho (coordenadas da página)
+  const gunPos = () => (isJumper() ? { x: J.x, y: J.y - JH / 2 } : { x: segs[0].x + scrollX, y: segs[0].y + scrollY });
+
+  // alvo: jogador mais perto no alcance; se não tiver, inimigo mais perto
+  function pickTarget(ox, oy, range) {
+    let best = null, bd = range;
+    for (const [id, p] of peers) {
+      if (p.iv) continue;                                          // piscando (acabou de levar dano)
+      const h = p.segs[0], d = Math.hypot(h.x - ox, h.y - oy);
+      if (d < bd) { bd = d; best = { x: h.x, y: h.y, peer: id }; }
+    }
+    if (best) return best;
+    bd = range;
+    for (const e of enemies) {
+      const cx = e.x + e.w / 2, cy = e.y + e.h / 2, d = Math.hypot(cx - ox, cy - oy);
+      if (d < bd) { bd = d; best = { x: cx, y: cy }; }
+    }
+    return best;
+  }
+
+  function spawnShots(ox, oy, ang, wid, mine) {
+    const W = WEAPONS[wid] || WEAPONS.pistola;
+    const now = performance.now();
+    for (let k = 0; k < W.n; k++) {
+      const a = ang + (W.n > 1 ? (k / (W.n - 1) - 0.5) * W.spread : (Math.random() - 0.5) * W.spread);
+      shots.push({ x: ox + Math.cos(a) * 14, y: oy + Math.sin(a) * 14, vx: Math.cos(a) * W.spd, vy: Math.sin(a) * W.spd,
+                   born: now, w: wid, mine, life: W.life || (W.range / W.spd) * 16.7 + 150, hit: W.pierce ? new Set() : null });
+    }
+  }
+
+  function autoFire(now) {
+    const W = weapon();
+    if (now - lastAuto < W.cad) return;
+    const o = gunPos();
+    const tg = pickTarget(o.x, o.y, W.range);
+    if (!tg) return;
+    lastAuto = now;
+    const ang = Math.atan2(tg.y - o.y, tg.x - o.x);
+    if (isJumper()) J.aim = ang;                                   // o canhão vira para o alvo
+    spawnShots(o.x, o.y, ang, weaponId, true);
+    if (netState === 'online') shotBuf.push(+ang.toFixed(2));
+  }
+  function flushShots(now) {
+    if (!shotBuf.length || now < shotFlushAt) return;
+    shotFlushAt = now + 250;
+    netEvent({ k: 'pw', id: myId, w: weaponId, a: shotBuf.splice(0, 12) });
+  }
+
+  // o tiro (meu) acertou um jogador? (cada um confere o próprio tiro)
+  function shotHitsPeer(s) {
+    for (const [id, p] of peers) {
+      if (p.iv || (s.hit && s.hit.has(id))) continue;
+      if (p.kind === 'j') {
+        const h = p.segs[0];
+        if (Math.abs(s.x - h.x) < JW / 2 + 3 && Math.abs(s.y - h.y) < JH / 2 + 3) return id;
+        continue;
+      }
+      const pr = 4.5 * p.scale * 1.5;
+      for (let i = 0; i < p.segs.length; i++) {
+        const g = p.segs[i];
+        if (Math.abs(s.x - g.x) < pr && Math.abs(s.y - g.y) < pr) return id;
+      }
+    }
+    return null;
+  }
+
   function updateShots(now) {
     const sx = scrollX, sy = scrollY;
     const W = document.documentElement.clientWidth || innerWidth;
@@ -2103,15 +2198,36 @@
     for (let i = shots.length - 1; i >= 0; i--) {
       const s = shots[i];
       s.x += s.vx; s.y += s.vy;
-      if (now - s.born > 1200 || s.x < sx - 20 || s.x > sx + W + 20 || s.y < sy - 20 || s.y > sy + H + 20) { shots.splice(i, 1); continue; }
-      for (let k = enemies.length - 1; k >= 0; k--) {
-        const e = enemies[k];
-        if (s.x > e.x - 6 && s.x < e.x + e.w + 6 && s.y > e.y - 6 && s.y < e.y + e.h + 6) {
-          damageEnemy(e, k, now);
-          shots.splice(i, 1);
-          floaters.push({ text: '✦', x: s.x, y: s.y, life: 0.4, good: true });
-          break;
+      const Wp = WEAPONS[s.w] || WEAPONS.pistola;
+      const out = now - s.born > (s.life || 1200) || s.x < sx - 40 || s.x > sx + W + 40 || s.y < sy - 40 || s.y > sy + H + 40;
+      if (out) {
+        if (s.mine && Wp.boom && now - s.born > (s.life || 1200)) breakCircle(s.x, s.y, Wp.boom);   // bazuca explode no fim
+        shots.splice(i, 1); continue;
+      }
+      if (!s.mine) continue;                                        // tiro dos outros: só aparece
+      let done = false;
+      // jogadores primeiro
+      const pid = shotHitsPeer(s);
+      if (pid) {
+        netEvent({ k: 'ph', v: pid, w: s.w });
+        floaters.push({ text: '✦', x: s.x, y: s.y, life: 0.5, good: true });
+        const pp = peers.get(pid); if (pp) pp.iv = true;             // pisca até a próxima posição chegar
+        if (s.hit) s.hit.add(pid); else done = true;
+      }
+      if (!done) {
+        for (let k = enemies.length - 1; k >= 0; k--) {
+          const e = enemies[k];
+          if (s.hit && s.hit.has(e.id)) continue;
+          if (s.x > e.x - 6 && s.x < e.x + e.w + 6 && s.y > e.y - 6 && s.y < e.y + e.h + 6) {
+            damageEnemy(e, k, now);
+            floaters.push({ text: '✦', x: s.x, y: s.y, life: 0.4, good: true });
+            if (s.hit) s.hit.add(e.id); else { done = true; break; }
+          }
         }
+      }
+      if (done) {
+        if (Wp.boom) breakCircle(s.x, s.y, Wp.boom);
+        shots.splice(i, 1);
       }
     }
   }
@@ -2166,8 +2282,10 @@
     drawGrenades(now);
     ctx.save();
     for (const s of shots) {
-      ctx.strokeStyle = S.color; ctx.lineWidth = 4; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(s.x - s.vx * 1.2 - sx, s.y - s.vy * 1.2 - sy); ctx.lineTo(s.x - sx, s.y - sy); ctx.stroke();
+      const Wp = WEAPONS[s.w] || WEAPONS.pistola;
+      const len = s.w === 'laser' ? 2.2 : 1.2;
+      ctx.strokeStyle = Wp.cor; ctx.lineWidth = s.w === 'bazuca' ? 7 : 4; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(s.x - s.vx * len - sx, s.y - s.vy * len - sy); ctx.lineTo(s.x - sx, s.y - sy); ctx.stroke();
       ctx.strokeStyle = LINE; ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -2177,8 +2295,9 @@
       ctx.globalAlpha = 1 - k;
       ctx.strokeStyle = S.color; ctx.lineWidth = 6 * (1 - k) + 1;
       ctx.fillStyle = 'rgba(255,140,40,' + (0.35 * (1 - k)) + ')';                      // clarão da explosão
-      ctx.beginPath(); ctx.arc(s.x - sx, s.y - sy, 10 + k * SLAM_R * 0.9, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(s.x - sx, s.y - sy, 18 + k * SLAM_R, 0, Math.PI * 2); ctx.stroke();
+      const sr = s.r || SLAM_R;
+      ctx.beginPath(); ctx.arc(s.x - sx, s.y - sy, 10 + k * sr * 0.9, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(s.x - sx, s.y - sy, 18 + k * sr, 0, Math.PI * 2); ctx.stroke();
       ctx.strokeStyle = LINE; ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -2294,7 +2413,10 @@
     const JP = isJumper();
     if (!JP) eatCheck();                    // o saltador não come encostando: ele quebra (Espaço) e atira
     updateEnemies(now);
-    if (JP) { updateShots(now); updateGrenades(now); }
+    autoFire(now);
+    updateShots(now);
+    flushShots(now);
+    if (JP) updateGrenades(now);
     looseCheck(now);
     if (!JP) pvpCheck(now);
     respawnTick(now);
@@ -2316,7 +2438,7 @@
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'all:initial;position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483646;';
   canvas.dataset.pagegame = '';
-  const ctx = canvas.getContext('2d', { desynchronized: true });
+  const ctx = canvas.getContext('2d');   // (sem "desynchronized": no Android ele deixava a tela preta)
   // modo leve: sombra/brilho do canvas é o que mais pesa no celular; vira nada
   function liteCanvas() {
     try { Object.defineProperty(ctx, 'shadowBlur', { configurable: true, get: () => 0, set: () => {} }); } catch {}
@@ -2503,8 +2625,8 @@
     drawBursts(performance.now());
 
     // o seu personagem (coordenadas da tela)
+    drawShotsAndSlams(now);
     if (isJumper()) {
-      drawShotsAndSlams(now);
       // rastro do dash
       for (let i = J.trail.length - 1; i >= 0; i--) {
         const tr = J.trail[i], k = (now - tr.born) / 260;
@@ -2743,7 +2865,7 @@
     window.__pgNet.sendPos({
       id: myId, a: toAnchor(lastSentX, lastSentY), h: +heading.toFixed(2),
       n: segs.length, s: +scale().toFixed(2), c: S.color, u: profile && profile.username,
-      pt: points(), iv: performance.now() < shieldUntil ? 1 : 0,
+      pt: points(), iv: performance.now() < Math.max(shieldUntil, invulnerableUntil) ? 1 : 0,
       k: isJumper() ? 'j' : 'w', f: J.face,
     });
   }
@@ -2833,6 +2955,7 @@
       txt = `🐛 ${fmt(pts)} ${Math.abs(pts) === 1 ? 'ponto' : 'pontos'}`;
       txt += `  |  comeu ${fmt(eaten.words + eaten.images + eaten.others + enemiesEaten)}`;
     }
+    txt += `  |  ${weapon().icon} ${weapon().nome}`;
     if (hits) txt += `  |  levou ${fmt(hits)} ${hits === 1 ? 'tiro' : 'tiros'}`;
     if (netState === 'online') txt += peerCount ? `  |  ${peerCount + 1} jogando aqui` : '  |  só você aqui';
     hud.textContent = txt;
@@ -2842,7 +2965,7 @@
   // ---------- Loop ----------
   let running = false, raf = null, mounted = false;
   let lastFrame = 0;
-  let slowFrames = 0;
+  let slowFrames = 0, lastIvSent = false;
   function frame(now) {
     if (lastFrame) {
       const dt = now - lastFrame;
@@ -2858,6 +2981,9 @@
     update();
     maxLen = Math.max(maxLen, segs.length);
     updatePeers();
+    // terminou a invencibilidade (depois de levar tiro): avisa logo, para voltar a poder ser alvo
+    const ivNow = now < Math.max(shieldUntil, invulnerableUntil);
+    if (ivNow !== lastIvSent) { lastIvSent = ivNow; sendMyPosition(true); }
     sendMyPosition(false);
     draw();
     if (t % 8 === 0) updateHud();
@@ -3093,7 +3219,7 @@
     scan = null;
     respawnQ.length = 0; loose.length = 0; eatBuf.clear();
     fills.length = 0; pendingFills.length = 0; fillBuf.length = 0; near = []; bursts.length = 0;
-    grenades.length = 0; WD.trail.length = 0; hitCooldown.clear(); shieldUntil = 0; boardKey = '';
+    grenades.length = 0; WD.trail.length = 0; shots.length = 0; shotBuf.length = 0; hitCooldown.clear(); shieldUntil = 0; boardKey = '';
     canvas.remove(); hud.remove(); board.remove(); touchUI.remove();
     mounted = false;
     resetCreature();

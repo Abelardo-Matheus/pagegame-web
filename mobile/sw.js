@@ -5,7 +5,7 @@ const SHELL = [
   './', './index.html', './app.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png',
   '../config.js', '../lib/supabase.js', '../platform.js', '../room.js', '../net.js',
-  '../content.js', '../content.css',
+  '../content.js', '../content.css', '../inventory.js',
 ];
 
 self.addEventListener('install', (e) => {

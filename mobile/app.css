@@ -139,3 +139,23 @@ html.playing .results { display: none; }
   font: 600 14px/1.2 system-ui, sans-serif; box-shadow: 0 6px 18px rgba(0,0,0,.25); white-space: nowrap;
 }
 html.playing .toast { top: 70px; }
+
+/* erro visível (diagnóstico no celular) */
+.err-bar {
+  position: fixed; left: 8px; right: 8px; bottom: calc(86px + env(safe-area-inset-bottom)); z-index: 40;
+  padding: 10px 12px; border-radius: 10px; background: #7a1010; color: #fff;
+  font: 600 13px/1.35 system-ui, sans-serif; box-shadow: 0 6px 18px rgba(0,0,0,.3);
+}
+
+/* Inventário de armas */
+.inv-coins { margin: 0; color: var(--muted); font-size: 13px; }
+.inv-note { margin: 0; color: var(--muted); font-size: 13px; }
+.inv-msg { margin: 4px 0 0; color: #ff9b8a; font-size: 13px; }
+.inv-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-radius: 10px; }
+.inv-row.on { background: rgba(255, 210, 63, .1); }
+.inv-icon { font-size: 22px; width: 28px; text-align: center; }
+.inv-text { flex: 1; min-width: 0; display: grid; }
+.inv-text small { color: var(--muted); font-size: 12px; line-height: 1.3; }
+.inv-row button { border: 1px solid var(--rule); background: none; color: var(--ink); border-radius: 10px; padding: 9px 12px; white-space: nowrap; }
+.inv-row button:disabled { opacity: .45; }
+.inv-on { color: var(--accent); font-weight: 700; white-space: nowrap; }

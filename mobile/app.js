@@ -35,8 +35,8 @@
     $('enemies').checked = settings.enemies;
     $('multiplayer').checked = settings.multiplayer;
     $('char-hint').textContent = settings.character === 'saltador'
-      ? 'Cai do topo e pula nas letras. Botões na tela: ◀ ▶ andam, ⤒ pula, ⤓ desce, ⚡ dash, 💣 joga granada. Toque na tela para mirar e atirar.'
-      : 'Segue o seu dedo, come as letras e cresce. ⚡ dá um dash.';
+      ? 'Cai do topo e pula nas letras. Botões: ◀ ▶ andam, ⤒ pula, ⤓ desce, ⚡ dash, 💣 granada. A arma atira sozinha (primeiro nos jogadores).'
+      : 'Segue o seu dedo, come as letras e cresce. ⚡ dá um dash. A arma atira sozinha (primeiro nos jogadores).';
   }
   const pick = (id, key, attr) => $(id).addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -90,6 +90,7 @@
     await store.set({ pgAuth: { userId: u.id, username } });    // o jogo só roda com isto
     showView('game');
     joinLobby();
+    PGInventory.render($('inventory'), sb);                     // armas: loja e equipar
   }
   async function leave() {
     user = null;
@@ -186,15 +187,40 @@
   const api = (lang) => `https://${lang}.wikipedia.org`;
   let current = null;
 
+  // busca com tempo limite (rede ruim no celular não trava o app)
+  async function fetchT(url, ms = 15000) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), ms);
+    try { return await fetch(url, { signal: ac.signal }); }
+    finally { clearTimeout(timer); }
+  }
+  // HTML do artigo: API REST; se falhar, a API "action" (outro caminho do mesmo site)
+  async function articleHtml(lang, title) {
+    let lastErr = null;
+    try {
+      const res = await fetchT(`${api(lang)}/api/rest_v1/page/html/${encodeURIComponent(title)}`);
+      if (res.ok) return await res.text();
+      lastErr = new Error('HTTP ' + res.status);
+    } catch (e) { lastErr = e; }
+    try {
+      const url = `${api(lang)}/w/api.php?action=parse&page=${encodeURIComponent(title)}&prop=text&redirects=1&format=json&formatversion=2&origin=*`;
+      const j = await (await fetchT(url)).json();
+      if (j && j.parse && j.parse.text) return '<!doctype html><html><body><section>' + j.parse.text + '</section></body></html>';
+      lastErr = new Error((j && j.error && j.error.info) || 'resposta vazia');
+    } catch (e) { lastErr = e; }
+    throw lastErr || new Error('falhou');
+  }
+
   async function openArticle(lang, title, push = true) {
     const art = $('article');
     const wasRunning = !!(last && last.running);
     if (last && last.mounted) render(await pgSend('restore'));    // limpa o jogo do artigo anterior
     art.innerHTML = '<p class="loading">Carregando…</p>';
+    let step = 'baixando';
     try {
-      const res = await fetch(`${api(lang)}/api/rest_v1/page/html/${encodeURIComponent(title)}`);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+      const html = await articleHtml(lang, title);
+      step = 'montando';
+      const doc = new DOMParser().parseFromString(html, 'text/html');
       slimArticle(doc);
       for (const img of doc.querySelectorAll('img')) {
         const v = img.getAttribute('src');
@@ -206,27 +232,62 @@
         const href = a.getAttribute('href');
         if (href.startsWith('./')) {                         // link para outro artigo: abre no app
           a.setAttribute('href', `#/${lang}/${href.slice(2)}`);
+        } else if (href.startsWith('/wiki/')) {              // (formato da API "action")
+          a.setAttribute('href', `#/${lang}/${href.slice(6)}`);
         } else {
           a.target = '_blank'; a.rel = 'noopener';
         }
       }
+      step = 'mostrando';
       const h1 = document.createElement('h1');
       h1.textContent = decodeURIComponent(title).replace(/_/g, ' ');
-      art.replaceChildren(h1, ...[...doc.body.childNodes].map((n) => document.importNode(n, true)));
+      const frag = document.createDocumentFragment();
+      frag.appendChild(h1);
+      for (const n of Array.from(doc.body.childNodes)) frag.appendChild(document.importNode(n, true));
+      art.textContent = '';
+      art.appendChild(frag);
       current = { lang, title };
       globalThis.PG_PAGE_URL = `https://pagegame.app/wiki/${lang}/${title}`;
       document.title = `${h1.textContent} · PageGame`;
-      if (push) history.pushState(null, '', `#/${lang}/${title}`);
+      if (push) { try { history.pushState(null, '', `#/${lang}/${title}`); } catch { /* alguns WebViews não deixam */ } }
       trackLobby();                                            // avisa a sala geral em qual artigo estou
       scrollTo(0, 0);
       if (wasRunning) setTimeout(play, 300);                 // estava jogando: continua no artigo novo
     } catch (err) {
-      art.innerHTML = '';
+      art.textContent = '';
       const p = document.createElement('p');
       p.className = 'error';
-      p.textContent = 'Não consegui abrir o artigo (' + err.message + '). Confira a internet e tente outro.';
-      art.append(p);
+      const why = err && err.name === 'AbortError' ? 'a internet demorou demais' : ((err && err.message) || String(err));
+      p.textContent = `Não consegui abrir o artigo (${step}: ${why}).`;
+      const again = document.createElement('button');
+      again.className = 'play'; again.type = 'button'; again.textContent = 'Tentar outro artigo';
+      again.style.marginTop = '12px';
+      again.addEventListener('click', () => findArticle());
+      art.append(p, again);
+      reportError('Artigo: ' + step + ': ' + why);
     }
+  }
+
+  // ---------- Erros visíveis (para teste no celular) ----------
+  // Mostra o erro numa faixa vermelha, para dar para contar o que aconteceu.
+  function reportError(msg) {
+    let el = $('err-bar');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'err-bar'; el.className = 'err-bar'; el.setAttribute('data-pagegame-ui', '');
+      el.addEventListener('click', () => { el.hidden = true; });
+      document.body.append(el);
+    }
+    el.textContent = '⚠ ' + String(msg).slice(0, 300) + '  (toque para fechar)';
+    el.hidden = false;
+  }
+  addEventListener('error', (e) => reportError((e.message || 'erro') + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : '')));
+  addEventListener('unhandledrejection', (e) => reportError('promessa: ' + ((e.reason && e.reason.message) || e.reason)));
+  // WebView muito antigo não tem o que o jogo precisa (esconder letras etc.)
+  const chromeVer = +((navigator.userAgent.match(/Chrome\/(\d+)/) || [])[1] || 0);
+  if (chromeVer && chromeVer < 105) {
+    setTimeout(() => reportError(`O navegador interno do seu Android está desatualizado (Chrome ${chromeVer}). ` +
+      'Atualize "Android System WebView" (ou o Chrome) na Play Store.'), 500);
   }
 
   // Artigo aleatório que dá para jogar: tem texto suficiente (letras para
@@ -356,7 +417,7 @@
     $('article').innerHTML = '<p class="loading">Procurando um artigo bom para jogar…</p>';
     for (let tries = 0; tries < 8; tries++) {
       try {
-        const res = await fetch(`${api(lang)}/api/rest_v1/page/random/summary`, { cache: 'no-store' });
+        const res = await fetchT(`${api(lang)}/api/rest_v1/page/random/summary`, 10000);
         const j = await res.json();
         const okType = !j.type || j.type === 'standard';
         const longEnough = (j.extract || '').length >= 350;
