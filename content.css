@@ -1,0 +1,7 @@
+/* Palavras comidas: o texto fica transparente sem mexer no DOM nem no layout.
+   Usa a CSS Custom Highlight API (Range objects, zero <span> criados). */
+::highlight(pg-eaten) {
+  color: transparent !important;
+  text-shadow: none !important;
+  text-decoration-color: transparent !important;
+}

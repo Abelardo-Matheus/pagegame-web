@@ -1,0 +1,16 @@
+{
+  "name": "PageGame",
+  "short_name": "PageGame",
+  "description": "Um bichinho que come as letras dos artigos da Wikipédia.",
+  "lang": "pt-BR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1b1913",
+  "theme_color": "#1b1913",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

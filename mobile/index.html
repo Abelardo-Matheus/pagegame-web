@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b1913">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>PageGame</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="../content.css">
+</head>
+<body>
+  <!-- Tudo com data-pagegame-ui é interface: o jogo não come nem bloqueia -->
+  <header class="bar" data-pagegame-ui>
+    <button id="menu-btn" class="icon-btn" type="button" aria-label="Menu">☰</button>
+    <form id="search" class="search" role="search">
+      <input id="q" type="search" placeholder="Buscar artigo na Wikipédia" autocomplete="off" enterkeyhint="search">
+    </form>
+    <button id="random-btn" class="icon-btn" type="button" aria-label="Artigo aleatório">🎲</button>
+    <ul id="results" class="results" hidden></ul>
+  </header>
+
+  <main id="article" class="article">
+    <p class="loading">Carregando…</p>
+  </main>
+
+  <button id="fab" class="fab" type="button" data-pagegame-ui>▶ Jogar</button>
+
+  <!-- Menu (gaveta de baixo) -->
+  <div id="sheet" class="sheet" data-pagegame-ui hidden>
+    <div class="sheet-card">
+      <div class="sheet-head">
+        <b>PageGame</b>
+        <span id="who" class="who" hidden><span id="username"></span> · <button id="logout" class="link" type="button">Sair</button></span>
+        <button id="close-sheet" class="icon-btn" type="button" aria-label="Fechar">✕</button>
+      </div>
+
+      <!-- Entrar / criar conta -->
+      <section id="view-auth" hidden>
+        <div class="tabs">
+          <button id="tab-login" type="button" aria-selected="true">Entrar</button>
+          <button id="tab-signup" type="button" aria-selected="false">Criar conta</button>
+        </div>
+        <form id="auth-form" novalidate>
+          <label class="field" id="field-username" hidden><span>Nome de usuário</span>
+            <input id="in-username" autocomplete="username" maxlength="20" placeholder="3 a 20 letras, números ou _"></label>
+          <label class="field"><span>E-mail</span><input id="in-email" type="email" autocomplete="email"></label>
+          <label class="field"><span>Senha</span><input id="in-password" type="password" autocomplete="current-password"></label>
+          <button id="auth-submit" class="play" type="submit">Entrar</button>
+        </form>
+        <p id="auth-msg" class="msg" hidden></p>
+      </section>
+
+      <!-- Jogo -->
+      <section id="view-game" hidden>
+        <div class="row2">
+          <button id="play" class="play" type="button">▶ Jogar</button>
+          <button id="restore" class="ghost" type="button">Restaurar</button>
+        </div>
+        <p id="stats" class="stats">—</p>
+
+        <div class="group">
+          <span class="label">Personagem</span>
+          <div class="segmented" id="character">
+            <button type="button" data-char="bicho">🐛 Bicho</button>
+            <button type="button" data-char="saltador">🎯 Saltador</button>
+          </div>
+          <p class="hint" id="char-hint"></p>
+        </div>
+
+        <div class="group">
+          <span class="label">Cor</span>
+          <div class="swatches" id="colors">
+            <button data-color="#ffd23f" style="--c:#ffd23f" aria-label="Amarelo"></button>
+            <button data-color="#7ee081" style="--c:#7ee081" aria-label="Verde"></button>
+            <button data-color="#6cb6ff" style="--c:#6cb6ff" aria-label="Azul"></button>
+            <button data-color="#ff7a7a" style="--c:#ff7a7a" aria-label="Vermelho"></button>
+            <button data-color="#d9a7ff" style="--c:#d9a7ff" aria-label="Lilás"></button>
+          </div>
+        </div>
+
+        <div class="group">
+          <label class="check"><input type="checkbox" id="enemies"> Palavras inimigas</label>
+          <div class="segmented" id="difficulty">
+            <button type="button" data-level="facil">Fácil</button>
+            <button type="button" data-level="normal">Normal</button>
+            <button type="button" data-level="dificil">Difícil</button>
+          </div>
+          <label class="check"><input type="checkbox" id="multiplayer"> Multiplayer (quem está no mesmo artigo)</label>
+        </div>
+
+        <div class="group">
+          <span class="label">Idioma da Wikipédia</span>
+          <div class="segmented" id="lang">
+            <button type="button" data-lang="pt">PT</button>
+            <button type="button" data-lang="en">EN</button>
+            <button type="button" data-lang="es">ES</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="../config.js"></script>
+  <script src="../lib/supabase.js"></script>
+  <script src="../platform.js"></script>
+  <script src="../room.js"></script>
+  <script src="../net.js"></script>
+  <script src="../content.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
