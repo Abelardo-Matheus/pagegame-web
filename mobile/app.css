@@ -12,14 +12,17 @@
 [hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
-  margin: 0; background: var(--paper); color: var(--paper-ink);
+  margin: 0; padding-top: var(--bar-h, 56px);
+  touch-action: manipulation;                 /* sem atraso / zoom de toque duplo */ background: var(--paper); color: var(--paper-ink);
   font: 18px/1.6 Georgia, "Times New Roman", serif;
 }
 button { font: inherit; cursor: pointer; }
 
 /* barra de cima */
 .bar {
-  position: sticky; top: 0; z-index: 10;
+  /* fixa por cima da página: esconder durante o jogo não mexe no layout do texto */
+  position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+  transition: transform .2s ease;
   display: flex; align-items: center; gap: 8px;
   padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
   background: var(--bg); color: var(--ink);
@@ -124,3 +127,15 @@ button { font: inherit; cursor: pointer; }
 .msg[hidden] { display: none; }
 .msg.error { color: #ff9b8a; }
 .msg.ok { color: #9be39a; }
+
+/* jogando: a barra sai da frente (mais tela para o jogo) */
+html.playing .bar { transform: translateY(-110%); }
+html.playing .results { display: none; }
+
+/* aviso rápido (ex.: "3 pessoas jogando aqui") */
+.toast {
+  position: fixed; left: 50%; top: calc(var(--bar-h, 56px) + 12px); transform: translateX(-50%); z-index: 25;
+  padding: 9px 14px; border-radius: 999px; background: #16301b; color: #c9f2cc; border: 1px solid #2f6b3a;
+  font: 600 14px/1.2 system-ui, sans-serif; box-shadow: 0 6px 18px rgba(0,0,0,.25); white-space: nowrap;
+}
+html.playing .toast { top: 70px; }

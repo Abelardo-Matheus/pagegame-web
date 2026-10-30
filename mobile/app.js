@@ -35,14 +35,14 @@
     $('enemies').checked = settings.enemies;
     $('multiplayer').checked = settings.multiplayer;
     $('char-hint').textContent = settings.character === 'saltador'
-      ? 'Cai do topo e pula nas letras. Botões na tela: ◀ ▶ andam, ⤒ pula, ⤓ desce, ⚡ dash, 💥 quebra as letras em volta. Toque na tela para atirar.'
-      : 'Segue o seu dedo, come as letras e cresce.';
+      ? 'Cai do topo e pula nas letras. Botões na tela: ◀ ▶ andam, ⤒ pula, ⤓ desce, ⚡ dash, 💣 joga granada. Toque na tela para mirar e atirar.'
+      : 'Segue o seu dedo, come as letras e cresce. ⚡ dá um dash.';
   }
   const pick = (id, key, attr) => $(id).addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b || !b.dataset[attr]) return;
     settings[key] = b.dataset[attr]; paint(); save();
-    if (key === 'lang') randomArticle();
+    if (key === 'lang') findArticle();
   });
   pick('character', 'character', 'char');
   pick('difficulty', 'difficulty', 'level');
@@ -80,17 +80,20 @@
   $('tab-login').addEventListener('click', () => setMode('login'));
   $('tab-signup').addEventListener('click', () => setMode('signup'));
 
-  let user = null;
+  let user = null, myName = '';
   async function enter(u) {
     user = u;
     const { data } = await sb.from('profiles').select('username').eq('id', u.id).maybeSingle();
     const username = (data && data.username) || (u.user_metadata && u.user_metadata.username) || u.email;
     $('username').textContent = '@' + username;
+    myName = username;
     await store.set({ pgAuth: { userId: u.id, username } });    // o jogo só roda com isto
     showView('game');
+    joinLobby();
   }
   async function leave() {
     user = null;
+    leaveLobby();
     await store.remove('pgAuth');
     await pgSend('pause');
     showView('auth');
@@ -113,6 +116,7 @@
         const { data, error } = await sb.auth.signInWithPassword({ email, password });
         if (error) throw error;
         await enter(data.user);
+        busiest().then((b) => { if (b) { openArticle(b.lang, b.title); toast(`${b.count} ${b.count === 1 ? 'pessoa jogando' : 'pessoas jogando'} aqui`); } });
       } else {
         const { data: taken } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
         if (taken) throw new Error('Esse nome de usuário já está em uso.');
@@ -143,6 +147,15 @@
     if (!user) { openSheet(); return; }
     closeSheet();
     $('results').hidden = true;
+    // antes de começar: se tem gente jogando em outro artigo (e aqui não), vai para lá
+    if (!(last && last.mounted)) {
+      const b = await busiest(false);
+      if (b && !(current && b.lang === current.lang && b.title === current.title) && othersHere() === 0) {
+        await openArticle(b.lang, b.title);
+        toast(`${b.count} ${b.count === 1 ? 'pessoa jogando' : 'pessoas jogando'} aqui`);
+      }
+    }
+    setPlaying(true);                                        // esconde a barra antes de o jogo montar os botões
     render(await pgSend('play'));
   }
   $('fab').addEventListener('click', play);
@@ -152,8 +165,11 @@
   $('restore').addEventListener('click', async () => render(await pgSend('restore')));
 
   function render(st) {
+    const was = !!(last && last.running);
     last = st;
     const running = !!(st && st.running);
+    setPlaying(running);
+    if (was !== running) trackLobby();
     $('fab').hidden = running;
     $('fab').textContent = st && st.mounted ? '▶ Continuar' : '▶ Jogar';
     $('play').textContent = running ? '❚❚ Pausar' : (st && st.mounted ? '▶ Continuar' : '▶ Jogar');
@@ -162,6 +178,7 @@
     $('stats').textContent = `${fmt(st.points)} pontos · ${fmt(st.eaten.words)} letras · ${fmt(st.eaten.enemies)} inimigos${players}`;
   }
   setInterval(async () => render(await pgSend('status')), 1000);
+  addEventListener('pagegame-state', async () => render(await pgSend('status')));   // jogo pausou/continuou
 
   // ---------- Wikipédia ----------
   // O artigo vira a "página" do jogo. A sala do multiplayer é por artigo
@@ -178,13 +195,12 @@
       const res = await fetch(`${api(lang)}/api/rest_v1/page/html/${encodeURIComponent(title)}`);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
-      doc.querySelectorAll('script, style, link, meta, .mw-ref, .navbox, .mw-editsection').forEach((n) => n.remove());
+      slimArticle(doc);
       for (const img of doc.querySelectorAll('img')) {
-        for (const a of ['src', 'srcset']) {
-          const v = img.getAttribute(a);
-          if (v) img.setAttribute(a, v.replace(/(^|\s|,)\/\//g, '$1https://'));
-        }
-        img.loading = 'lazy';
+        const v = img.getAttribute('src');
+        if (v) img.setAttribute('src', v.replace(/^\/\//, 'https://'));
+        img.removeAttribute('srcset');                       // sem versões 2x/3x: imagem leve no celular
+        img.loading = 'lazy'; img.decoding = 'async';
       }
       for (const a of doc.querySelectorAll('a[href]')) {
         const href = a.getAttribute('href');
@@ -201,6 +217,7 @@
       globalThis.PG_PAGE_URL = `https://pagegame.app/wiki/${lang}/${title}`;
       document.title = `${h1.textContent} · PageGame`;
       if (push) history.pushState(null, '', `#/${lang}/${title}`);
+      trackLobby();                                            // avisa a sala geral em qual artigo estou
       scrollTo(0, 0);
       if (wasRunning) setTimeout(play, 300);                 // estava jogando: continua no artigo novo
     } catch (err) {
@@ -217,6 +234,123 @@
   const FALLBACK = { pt: ['Gato', 'Brasil', 'Futebol', 'Sistema_Solar', 'Dinossauro'],
                      en: ['Cat', 'Brazil', 'Football', 'Solar_System', 'Dinosaur'],
                      es: ['Gato', 'Brasil', 'Fútbol', 'Sistema_solar', 'Dinosaurio'] };
+  // ---------- Onde tem gente ----------
+  // Sala geral "page:lobby": cada jogador do app avisa em qual artigo está
+  // (Presence). Ao abrir o app (e ao tocar em Jogar) o jogo vai para o artigo
+  // com mais gente; se não tiver ninguém, abre um aleatório.
+  let lobby = null, lobbyReady = false, lobbyState = {};
+  const lobbyWaiters = [];
+  async function joinLobby() {
+    if (lobby || !user) return;
+    try {
+      const { data } = await sb.auth.getSession();
+      if (!data.session) return;
+      await sb.realtime.setAuth(data.session.access_token);
+      const ch = sb.channel('page:lobby', { config: { private: true, presence: { key: user.id } } });
+      lobby = ch;
+      ch.on('presence', { event: 'sync' }, () => {
+        lobbyState = ch.presenceState();
+        while (lobbyWaiters.length) lobbyWaiters.shift()();
+      });
+      ch.subscribe((status) => {
+        if (status === 'SUBSCRIBED') { lobbyReady = true; trackLobby(); }
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { while (lobbyWaiters.length) lobbyWaiters.shift()(); }
+      });
+    } catch { /* sem conexão: segue sem a sala geral */ }
+  }
+  function leaveLobby() {
+    if (lobby) { try { sb.removeChannel(lobby); } catch {} }
+    lobby = null; lobbyReady = false; lobbyState = {};
+  }
+  function trackLobby() {
+    if (!lobby || !lobbyReady || !current) return;
+    lobby.track({ lang: current.lang, title: current.title, u: myName, playing: !!(last && last.running) }).catch(() => {});
+  }
+  // espera a primeira lista de quem está na sala geral (no máximo ~2,5 s)
+  const lobbySynced = () => new Promise((r) => {
+    if (Object.keys(lobbyState).length || !lobby) return r();
+    lobbyWaiters.push(r); setTimeout(r, 2500);
+  });
+  function othersHere() {
+    if (!current) return 0;
+    let n = 0;
+    for (const [id, metas] of Object.entries(lobbyState)) {
+      const m = metas[metas.length - 1];
+      if (id !== (user && user.id) && m && m.lang === current.lang && m.title === current.title) n++;
+    }
+    return n;
+  }
+  // wait = false: não espera a sala geral responder (ex.: ao tocar em Jogar, para não travar)
+  async function busiest(wait = true) {
+    if (!user) return null;
+    await joinLobby();
+    if (wait) await lobbySynced();
+    const count = new Map();
+    for (const [id, metas] of Object.entries(lobbyState)) {
+      if (id === user.id) continue;
+      const m = metas[metas.length - 1];
+      if (!m || !m.title || !m.lang) continue;
+      const k = m.lang + '|' + m.title;
+      count.set(k, (count.get(k) || 0) + (m.playing ? 2 : 1));      // quem está jogando pesa mais
+    }
+    let best = null;
+    for (const [k, n] of count) if (!best || n > best.n) best = { k, n };
+    if (!best) return null;
+    const [lang, title] = best.k.split('|');
+    let people = 0;
+    for (const [id, metas] of Object.entries(lobbyState)) {
+      const m = metas[metas.length - 1];
+      if (id !== user.id && m && m.lang === lang && m.title === title) people++;
+    }
+    return { lang, title, count: people };
+  }
+  // abre o artigo com gente; se não tiver ninguém, um aleatório bom para jogar
+  async function findArticle() {
+    const b = await busiest();
+    if (b) {
+      await openArticle(b.lang, b.title);
+      toast(`${b.count} ${b.count === 1 ? 'pessoa jogando' : 'pessoas jogando'} aqui`);
+      return;
+    }
+    randomArticle();
+  }
+  let toastTimer = null;
+  function toast(text) {
+    let el = $('toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'toast'; el.className = 'toast'; el.setAttribute('data-pagegame-ui', '');
+      el.setAttribute('role', 'status');
+      document.body.append(el);
+    }
+    el.textContent = text; el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+  }
+
+  // Artigo mais leve para o celular: tira referências, caixas de navegação,
+  // atributos enormes do Parsoid (data-mw) e corta depois de ~MAX letras.
+  const MAX_TEXT = matchMedia('(pointer: coarse)').matches ? 18000 : 45000;
+  const SKIP_SECTIONS = /refer|nota|liga[cç][oõ]es externas|bibliograf|ver tamb|fontes|leitura|see also|external links|further reading|bibliography|notes|sources|enlaces externos|v[ée]ase tambi|bibliograf/i;
+  function slimArticle(doc) {
+    doc.querySelectorAll('script, style, link, meta, .mw-ref, sup.reference, .reference, .references, .reflist, ' +
+      '.navbox, .navbox-styles, .metadata, .ambox, .mw-editsection, .noprint, .sistersitebox, .portal, ' +
+      '.mw-references-wrap, .mbox-small, .vertical-navbox, .authority-control').forEach((n) => n.remove());
+    for (const el of doc.body.querySelectorAll('*')) {
+      for (const at of [...el.attributes]) {
+        if (at.name.startsWith('data-') || at.name === 'about' || at.name === 'typeof' || at.name === 'property' || at.name === 'style') {
+          el.removeAttribute(at.name);
+        }
+      }
+    }
+    let total = 0;
+    for (const sec of [...doc.body.children]) {
+      const h = sec.querySelector('h2');
+      if ((h && SKIP_SECTIONS.test(h.textContent)) || total > MAX_TEXT) { sec.remove(); continue; }
+      total += sec.textContent.length;
+    }
+  }
+
   async function randomArticle() {
     const lang = settings.lang;
     $('article').innerHTML = '<p class="loading">Procurando um artigo bom para jogar…</p>';
@@ -234,7 +368,6 @@
     const list = FALLBACK[lang] || FALLBACK.pt;
     openArticle(lang, list[(Math.random() * list.length) | 0]);
   }
-  $('random-btn').addEventListener('click', randomArticle);
 
   // busca com sugestões
   let searchTimer = null;
@@ -275,9 +408,20 @@
   });
 
   // os botões do jogo ficam abaixo da barra de cima do app
-  const setTouchTop = () => { globalThis.PG_TOUCH_TOP = document.querySelector('.bar').getBoundingClientRect().bottom; };
-  setTouchTop();
-  addEventListener('resize', setTouchTop);
+  // A barra de cima é fixa. Jogando, ela some (mais tela) e os botões do jogo
+  // sobem para o topo; pausado, ela volta e os botões ficam abaixo dela.
+  const barH = () => document.querySelector('.bar').offsetHeight;
+  let playingNow = null;
+  function setPlaying(on) {
+    document.documentElement.style.setProperty('--bar-h', barH() + 'px');
+    globalThis.PG_TOUCH_TOP = on ? 0 : barH();
+    globalThis.PG_BAR_H = barH();
+    if (on === playingNow) return;
+    playingNow = on;
+    document.documentElement.classList.toggle('playing', on);
+  }
+  setPlaying(false);
+  addEventListener('resize', () => setPlaying(!!playingNow));
 
   // ---------- Início ----------
   (async () => {
@@ -287,16 +431,21 @@
     setMode('login');
 
     const h = fromHash();
-    if (h) openArticle(h.lang, h.title, false); else randomArticle();
-
     sb.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT') leave(); });
     const { data: { session } } = await sb.auth.getSession();
-    if (!session) { await store.remove('pgAuth'); showView('auth'); openSheet(); return; }
+    if (!session) {
+      // sem conta: abre um artigo para ler enquanto entra
+      if (h) openArticle(h.lang, h.title, false); else randomArticle();
+      await store.remove('pgAuth'); showView('auth'); openSheet(); return;
+    }
     const { data, error } = await sb.auth.getUser();
     if (error && !/fetch|network/i.test(error.message)) {
+      if (h) openArticle(h.lang, h.title, false); else randomArticle();
       await sb.auth.signOut({ scope: 'local' }); showView('auth'); openSheet(); return;
     }
     await enter((data && data.user) || session.user);
+    // link direto para um artigo abre ele; senão vai para onde tem gente (ou aleatório)
+    if (h) openArticle(h.lang, h.title, false); else findArticle();
   })();
 
   // instalar como app (funciona offline o menu; os artigos precisam de internet)

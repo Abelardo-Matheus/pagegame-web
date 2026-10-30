@@ -1,4 +1,4 @@
-// PageGame v0.15: o bichinho come palavras, imagens e elementos de qualquer página.
+// PageGame v0.17: o bichinho come palavras, imagens e elementos de qualquer página.
 //
 // Como o scan fica leve mesmo em páginas enormes:
 //  1. Nada roda até o Play: o script só é injetado na aba quando você aperta Play.
@@ -65,8 +65,14 @@
   // ---------- Constantes ----------
   const CELL = 128;
   const OBJ = 1 << 24;                // ids >= OBJ na grade são objetos (imagens etc.)
-  const SCAN_BUDGET_MS = 6;
-  const LRU_MAX = 300;                // nós de texto com palavras resolvidas em cache
+  // Modo leve: celular/tablet (ou quando o aparelho não aguenta 40 fps).
+  // Canvas em resolução menor, sem sombras/brilho, menos partículas, scan
+  // mais curto por quadro e menos mensagens de rede.
+  const LITE = matchMedia('(pointer: coarse)').matches || Math.min(screen.width, screen.height) < 700;
+  let lite = LITE;
+  const SCAN_BUDGET_MS = LITE ? 4 : 6;
+  const LRU_MAX = LITE ? 150 : 300;    // nós de texto com palavras resolvidas em cache
+  const FX_CAP = LITE ? 30 : 120;      // máximo de partículas / textos subindo ao mesmo tempo
   const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'head', 'meta', 'link', 'title']);
   const IMAGE_TAGS = new Set(['img', 'svg', 'canvas']);
   const OTHER_TAGS = new Set(['video', 'iframe', 'input', 'textarea', 'select', 'embed', 'object', 'audio']);
@@ -553,12 +559,14 @@
   let slowUntil = 0, pushVX = 0, pushVY = 0;      // efeitos do gelo e da ventania
 
   // levei um tiro / encostão
+  const buzz = (ms) => { try { if (navigator.vibrate && matchMedia('(pointer: coarse)').matches) navigator.vibrate(ms); } catch {} };
   function hurtMe(now, mx, my) {
     if (now <= invulnerableUntil) return;
     if (isJumper() && now < J.dashUntil + 80) return;                 // dash: desvia dos tiros
     hits++;
     invulnerableUntil = now + 600;
     hitFlash = 1;
+    buzz(35);                                                          // celular vibra quando leva tiro
     floaters.push({ text: `-${HIT_PENALTY}`, x: mx, y: my - 10, life: 1, good: false });
   }
 
@@ -952,7 +960,13 @@
     chefe:  { nome: 'Chefão',        cor: '#8b0000', hp: 5, big: 1.7, fire: 1700, spd: 4.2, spread: 5, cone: 1.1 }, // grandão
     vento:  { nome: 'Ventania',      cor: '#00897b', gust: 2400, push: 10 },                     // empurra o bicho para longe
   };
-  const TRANSFORM_MAX = 12;           // no máximo 12 palavras transformadas vivas
+  // Palavras transformadas são raras: no máximo 3 vivas, uma a cada 12 s por
+  // jogador, e as letras só são "puxadas" de longe de vez em quando.
+  const TRANSFORM_MAX = 3;
+  const TRANSFORM_COOLDOWN = 12000;
+  const PULL_CHANCE = 0.12;           // chance de um buraco puxar a letra que falta
+  const PULL_COOLDOWN = 6000;
+  let lastTransform = -1e9, lastPull = -1e9;
   const TRANSFORM_LIFE = 22000;
 
   // sem acento, minúsculas, só letras
@@ -967,6 +981,7 @@
     if (p.length < 4 || p.length > 6) return;
     const type = ENEMY_BY_KEY.get(anagramKey(p));
     if (!type) return;
+    if (performance.now() - lastTransform < TRANSFORM_COOLDOWN) return;
     if (enemies.filter((e) => e.msg.tr).length >= TRANSFORM_MAX) return;
     const path = pathOf(node);
     if (!path || !d.rects || !d.rects[w * 4 + 2]) return;
@@ -981,6 +996,8 @@
     };
     const e = makeEnemy(m, performance.now());
     if (!e) return;
+    lastTransform = performance.now();
+    buzz(40);
     near = near.filter((n) => !(n.node === node && n.w === w));
     spawnBurst(e);
     floaters.push({ text: `${T.nome}!`, x: e.x + e.w / 2, y: e.y - 18, life: 1.4, good: false });
@@ -1178,10 +1195,15 @@
       const w = wordAt(q.d, q.o);
       if (w < 0) continue;
       let src = null, hint = null;
-      if (S.enemies && hasHighlight) {
+      const canPull = S.enemies && hasHighlight && now - lastPull > PULL_COOLDOWN &&
+        now - lastTransform > TRANSFORM_COOLDOWN && Math.random() < PULL_CHANCE &&
+        enemies.filter((e) => e.msg.tr).length < TRANSFORM_MAX;
+      if (canPull) {
         const st = wordState(q.node, q.d, w);
-        const best = bestTarget(st.have, st.holes.length);
+        const found = bestTarget(st.have, st.holes.length);
+        const best = found && found.need.length === 1 ? found : null;   // só quando falta 1 letra
         if (best) {
+          lastPull = now;
           const hr = letterRect(q.node, q.o, q.len);
           src = findLetterAnywhere(best.need[0], q.node, w, hr.top + scrollY);
           if (src) {
@@ -1208,8 +1230,9 @@
   function spawnBurst(e) {
     const cx = e.x + e.w / 2, cy = e.y + e.h / 2, now = performance.now();
     bursts.push({ ring: true, x: cx, y: cy, color: e.color, born: now });
-    for (let k = 0; k < 18; k++) {
-      const a = (k / 18) * Math.PI * 2, v = 2.5 + Math.random() * 3;
+    const nb = lite ? 8 : 18;
+    for (let k = 0; k < nb; k++) {
+      const a = (k / nb) * Math.PI * 2, v = 2.5 + Math.random() * 3;
       bursts.push({ x: cx, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, ch: e.text[k % e.text.length],
                     color: e.color, born: now });
     }
@@ -1946,15 +1969,75 @@
     speedNow = Math.abs(J.vx);
   }
 
-  // Espaço: bate em volta e quebra as letras num círculo
+  // =====================================================================
+  // GRANADA (Espaço / 💣): o saltador joga uma granada na direção do mouse.
+  // Ela tem gravidade e quica nas letras (plataformas). Como as plataformas
+  // são de mão única, jogada de baixo para cima ela atravessa e, quando volta
+  // caindo, para em cima da letra. Depois de 1,6 s explode e quebra as letras
+  // num círculo (e machuca os inimigos perto).
+  // =====================================================================
   const SLAM_R = 85;
-  function slam() {
+  const grenades = [];
+  const GRENADE_FUSE = 1600;
+  function throwGrenade(angle) {
     const now = performance.now();
-    if (now - J.lastSlam < 450) return;
+    if (now - J.lastSlam < 550 || grenades.length >= 3) return;
     J.lastSlam = now;
-    const cx = J.x, cy = J.y - JH / 2;
+    const a = angle != null ? angle : J.aim;
+    const sp = 10.5;
+    grenades.push({ x: J.x + Math.cos(a) * 14, y: J.y - JH / 2 + Math.sin(a) * 14,
+                    vx: Math.cos(a) * sp + J.vx * 0.4, vy: Math.sin(a) * sp, born: now, spin: 0 });
+    J.squash = 0.12;
+    buzz(10);
+  }
+  function updateGrenades(now) {
+    const W = document.documentElement.clientWidth || innerWidth;
+    const se = document.scrollingElement || document.documentElement;
+    for (let i = grenades.length - 1; i >= 0; i--) {
+      const g = grenades[i];
+      if (now - g.born > GRENADE_FUSE) { grenades.splice(i, 1); breakCircle(g.x, g.y - 5); continue; }
+      const prev = g.y;
+      g.vy = Math.min(g.vy + 0.42, 15);
+      g.x += g.vx; g.y += g.vy; g.spin += g.vx * 0.09;
+      // bate nas paredes da janela
+      const minX = scrollX + 5, maxX = scrollX + W - 5;
+      if (g.x < minX) { g.x = minX; g.vx = Math.abs(g.vx) * 0.6; }
+      else if (g.x > maxX) { g.x = maxX; g.vx = -Math.abs(g.vx) * 0.6; }
+      // plataformas de mão única: subindo atravessa; descendo quica e fica
+      if (g.vy >= 0) {
+        // (largura maior que o espaço entre palavras, senão cai no vão)
+        const top = platformBetween(g.x - 8, g.x + 8, prev - 1, g.y + 1);
+        if (top !== null) {
+          g.y = top;
+          if (g.vy > 2.2) { g.vy = -g.vy * 0.42; g.vx *= 0.7; }     // quica
+          else { g.vy = 0; g.vx *= 0.6; if (Math.abs(g.vx) < 0.25) g.vx = 0; }   // parou na letra
+        }
+      }
+      if (g.y > se.scrollHeight + 100) grenades.splice(i, 1);
+    }
+  }
+  function drawGrenades(now) {
+    const sx = scrollX, sy = scrollY;
+    for (const g of grenades) {
+      const x = g.x - sx, y = g.y - sy - 5.5, left = 1 - (now - g.born) / GRENADE_FUSE;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(g.spin);
+      ctx.fillStyle = '#2f3b22'; ctx.strokeStyle = LINE; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(0, 0, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = S.color; ctx.fillRect(-5.5, -1.3, 11, 2.6);       // faixa na cor do jogador
+      ctx.restore();
+      // pavio pisca cada vez mais rápido
+      if (Math.floor((now - g.born) / Math.max(50, 220 * left)) % 2) {
+        ctx.fillStyle = '#ff5a1f';
+        ctx.beginPath(); ctx.arc(x + 2, y - 7, 2.6, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+
+  // explosão: quebra as letras num círculo em volta de (cx, cy)
+  function breakCircle(cx, cy) {
+    const now = performance.now();
     slams.push({ x: cx, y: cy, born: now });
-    J.squash = 0.3;
+    buzz(25);
     const ix = index, R2 = SLAM_R * SLAM_R;
     stamp++;
     for (let gx = Math.floor((cx - SLAM_R) / CELL); gx <= Math.floor((cx + SLAM_R) / CELL); gx++) {
@@ -2080,6 +2163,7 @@
 
   function drawShotsAndSlams(now) {
     const sx = scrollX, sy = scrollY;
+    drawGrenades(now);
     ctx.save();
     for (const s of shots) {
       ctx.strokeStyle = S.color; ctx.lineWidth = 4; ctx.lineCap = 'round';
@@ -2092,6 +2176,8 @@
       if (k >= 1) { slams.splice(i, 1); continue; }
       ctx.globalAlpha = 1 - k;
       ctx.strokeStyle = S.color; ctx.lineWidth = 6 * (1 - k) + 1;
+      ctx.fillStyle = 'rgba(255,140,40,' + (0.35 * (1 - k)) + ')';                      // clarão da explosão
+      ctx.beginPath(); ctx.arc(s.x - sx, s.y - sy, 10 + k * SLAM_R * 0.9, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.arc(s.x - sx, s.y - sy, 18 + k * SLAM_R, 0, Math.PI * 2); ctx.stroke();
       ctx.strokeStyle = LINE; ctx.lineWidth = 1;
       ctx.stroke();
@@ -2111,7 +2197,7 @@
       if (k === 'down') J.dropBuf = performance.now() + 150;
       e.preventDefault(); e.stopPropagation();
     }
-    else if (e.code === 'Space') { if (!e.repeat) slam(); e.preventDefault(); e.stopPropagation(); }
+    else if (e.code === 'Space') { if (!e.repeat) throwGrenade(); e.preventDefault(); e.stopPropagation(); }
     else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { if (!e.repeat) dash(); e.preventDefault(); e.stopPropagation(); }
   }, { capture: true });
   addEventListener('keyup', (e) => { if (JKEY[e.code]) jkeys.delete(JKEY[e.code]); }, { capture: true });
@@ -2124,6 +2210,24 @@
   addEventListener('mouseup', (e) => { if (e.button === 0) J.shooting = false; }, { capture: true });
   addEventListener('click', (e) => {
     if (running && isJumper() && !isUI(e.target)) { e.preventDefault(); e.stopPropagation(); }
+  }, { capture: true });
+
+  // =====================================================================
+  // DASH DO BICHO (Shift / ⚡): arrancada rápida na direção do mouse (ou do
+  // dedo), comendo tudo pelo caminho. Recarrega em 1,2 s.
+  // =====================================================================
+  const WD = { until: 0, last: 0, trail: [] };
+  function wormDash() {
+    const now = performance.now();
+    if (now - WD.last < 1200) return;
+    WD.last = now; WD.until = now + 260;
+    resting = false;
+    buzz(12);
+    floaters.push({ text: '»', x: segs[0].x + scrollX, y: segs[0].y + scrollY - 16, life: 0.5, good: true });
+  }
+  addEventListener('keydown', (e) => {
+    if (!running || isJumper() || e.repeat || isEditable(e.target)) return;
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { wormDash(); e.preventDefault(); }
   }, { capture: true });
 
   // movimento do bicho (personagem padrão)
@@ -2155,6 +2259,11 @@
       wanted = Math.min(maxSpeed, dist * 0.09) * (dist < 120 ? align : Math.max(0.35, align));
     }
     speedNow += (wanted - speedNow) * 0.15;
+    if (performance.now() < WD.until) {                             // dash: vira direto para o alvo e dispara
+      if (dist > 4) heading = Math.atan2(dy, dx);
+      speedNow = Math.max(speedNow, 3.4 * S.speed * 3.4);
+      WD.trail.push({ x: head.x + scrollX, y: head.y + scrollY, born: performance.now() });
+    }
     const wiggle = Math.sin(t * 0.25) * 0.05 * (speedNow / (maxSpeed || 1));
     head.x += Math.cos(heading + wiggle) * speedNow + pushVX;
     head.y += Math.sin(heading + wiggle) * speedNow + pushVY;
@@ -2185,7 +2294,7 @@
     const JP = isJumper();
     if (!JP) eatCheck();                    // o saltador não come encostando: ele quebra (Espaço) e atira
     updateEnemies(now);
-    if (JP) updateShots(now);
+    if (JP) { updateShots(now); updateGrenades(now); }
     looseCheck(now);
     if (!JP) pvpCheck(now);
     respawnTick(now);
@@ -2207,7 +2316,12 @@
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'all:initial;position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483646;';
   canvas.dataset.pagegame = '';
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { desynchronized: true });
+  // modo leve: sombra/brilho do canvas é o que mais pesa no celular; vira nada
+  function liteCanvas() {
+    try { Object.defineProperty(ctx, 'shadowBlur', { configurable: true, get: () => 0, set: () => {} }); } catch {}
+  }
+  if (LITE) liteCanvas();
   const hud = document.createElement('div');
   hud.style.cssText = [
     'all:initial', 'position:fixed', 'left:12px', 'bottom:12px', 'z-index:2147483647',
@@ -2262,7 +2376,7 @@
   }
 
   function resizeCanvas() {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, lite ? 1.5 : 2.5);   // tela 3x do celular custa caro
     canvas.width = Math.round(innerWidth * dpr);
     canvas.height = Math.round(innerHeight * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -2413,7 +2527,16 @@
       }
       drawJumper({ x: J.x - sx, y: J.y - sy - JH / 2, color: S.color, face: J.face, aim: J.aim, squash: J.squash,
                    t, moving: Math.abs(J.vx) > 0.5, onGround: J.onGround, alpha: now < invulnerableUntil ? blink : 1 });
-    } else drawCreature({
+    } else {
+      for (let i = WD.trail.length - 1; i >= 0; i--) {              // rastro do dash do bicho
+        const tr = WD.trail[i], k = (now - tr.born) / 280;
+        if (k >= 1) { WD.trail.splice(i, 1); continue; }
+        ctx.globalAlpha = 0.4 * (1 - k); ctx.fillStyle = S.color;
+        ctx.beginPath(); ctx.arc(tr.x - sx, tr.y - sy, mouthR() * (1 - k * 0.5), 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (!isJumper()) drawCreature({
       segs, heading, scale: scale(), color: S.color, mouthOpen, speed: speedNow, t,
       labels: S.showLabels ? carried : null, name: null,
       alpha: now < shieldUntil ? blink : 1,
@@ -2615,7 +2738,7 @@
     const moved = Math.abs(h.x + scrollX - lastSentX) + Math.abs(h.y + scrollY - lastSentY) > 1.5 ||
       Math.abs(heading - lastSentH) > 0.05;
     // 8 envios/s quando anda; 1 a cada 2 s parado (para quem acabou de entrar)
-    if (!force && !(moved && now - lastSent > 125) && now - lastSent < 2000) return;
+    if (!force && !(moved && now - lastSent > (lite ? 200 : 125)) && now - lastSent < 2000) return;   // 5/s no celular
     lastSent = now; lastSentX = h.x + scrollX; lastSentY = h.y + scrollY; lastSentH = heading;
     window.__pgNet.sendPos({
       id: myId, a: toAnchor(lastSentX, lastSentY), h: +heading.toFixed(2),
@@ -2719,9 +2842,18 @@
   // ---------- Loop ----------
   let running = false, raf = null, mounted = false;
   let lastFrame = 0;
+  let slowFrames = 0;
   function frame(now) {
-    if (lastFrame) playMs += Math.min(100, now - lastFrame);
+    if (lastFrame) {
+      const dt = now - lastFrame;
+      playMs += Math.min(100, dt);
+      // aparelho lento (menos de ~40 fps por uns 3 s): liga o modo leve sozinho
+      if (!lite && dt > 25 && dt < 200) { if (++slowFrames > 120) { lite = true; liteCanvas(); resizeCanvas(); } }
+      else if (slowFrames > 0) slowFrames--;
+    }
     lastFrame = now;
+    if (particles.length > FX_CAP) particles.splice(0, particles.length - FX_CAP);
+    if (floaters.length > FX_CAP) floaters.splice(0, floaters.length - FX_CAP);
     if (scan) scanStep(SCAN_BUDGET_MS);
     update();
     maxLen = Math.max(maxLen, segs.length);
@@ -2823,6 +2955,11 @@
     const dy = (jkeys.has('down') ? 1 : 0) - (jkeys.has('up') ? 1 : 0);
     dash(Math.atan2(dy || (dx ? 0 : -0.35), dx || J.face));
   };
+  let lastTouchAim = 0;
+  const grenadeButton = () => {
+    const recent = performance.now() - lastTouchAim < 2500;
+    throwGrenade(recent ? J.aim : (J.face > 0 ? -0.85 : Math.PI + 0.85));
+  };
   const pauseBtn = tbtn('❚❚', 'left:10px;top:10px;width:44px;height:44px;font-size:15px', () => (running ? pause() : tryPlay()));
   const pad = document.createElement('div');
   pad.style.cssText = 'all:initial;position:absolute;inset:0;pointer-events:none';
@@ -2831,20 +2968,28 @@
     tbtn('▶', 'left:84px;bottom:22px', ...hold('right')),
     tbtn('⤒', 'right:84px;bottom:22px', ...hold('up')),
     tbtn('⤓', 'right:84px;bottom:92px;width:48px;height:48px;font-size:17px', ...hold('down')),
-    tbtn('💥', 'right:14px;bottom:92px', () => slam()),
+    tbtn('💣', 'right:14px;bottom:92px', () => grenadeButton()),
     tbtn('⚡', 'right:14px;bottom:22px', () => dashButton()),
   );
-  touchUI.append(pauseBtn, pad);
+  // bicho no celular: só o dash (ele já segue o dedo)
+  const wormPad = document.createElement('div');
+  wormPad.style.cssText = 'all:initial;position:absolute;inset:0;pointer-events:none';
+  wormPad.append(tbtn('⚡', 'right:18px;bottom:26px;width:66px;height:66px;font-size:24px', () => wormDash()));
+  touchUI.append(pauseBtn, pad, wormPad);
 
   function syncTouchUI() {
     const on = mounted && isTouch();
     if (!on) { touchUI.remove(); return; }
     if (!touchUI.isConnected) document.documentElement.append(touchUI);
     pauseBtn.textContent = running ? '❚❚' : '▶';
+    // no app do celular, pausado quem continua é o botão do próprio app
+    pauseBtn.style.display = globalThis.PG_PLATFORM === 'web' && !running ? 'none' : 'flex';
     pad.style.display = running && isJumper() ? 'block' : 'none';
+    wormPad.style.display = running && !isJumper() ? 'block' : 'none';
     // no celular o HUD vai para cima (embaixo ficam os botões).
     // PG_TOUCH_TOP: o app do celular avisa a altura da barra dele, para não cobrir o menu.
-    const top = (globalThis.PG_TOUCH_TOP || 0) + 10;
+    // pausado no app do celular a barra dele volta: tudo desce para baixo dela (PG_BAR_H)
+    const top = (running ? (globalThis.PG_TOUCH_TOP || 0) : (globalThis.PG_BAR_H ?? globalThis.PG_TOUCH_TOP ?? 0)) + 10;
     pauseBtn.style.top = top + 'px';
     hud.style.left = '62px'; hud.style.top = (top + 6) + 'px'; hud.style.bottom = 'auto';
     board.style.top = (top + 2) + 'px';
@@ -2855,6 +3000,7 @@
   addEventListener('pointerdown', (e) => {
     if (!running || e.pointerType === 'mouse' || isUI(e.target)) return;
     mouse.x = e.clientX; mouse.y = e.clientY; mouseIn = true;
+    lastTouchAim = performance.now();
     if (isJumper()) J.shooting = true;
   }, { capture: true });
   addEventListener('pointermove', (e) => {
@@ -2869,10 +3015,12 @@
   function lockTouch(on) {
     const st = document.documentElement.style;
     if (on && !pageStyle) {
-      pageStyle = { ta: st.touchAction, us: st.webkitUserSelect, us2: st.userSelect };
+      pageStyle = { ta: st.touchAction, us: st.webkitUserSelect, us2: st.userSelect, ob: st.overscrollBehavior };
       st.touchAction = 'none'; st.webkitUserSelect = 'none'; st.userSelect = 'none';
+      st.overscrollBehavior = 'none';                  // sem "puxar para atualizar" no meio do jogo
     } else if (!on && pageStyle) {
       st.touchAction = pageStyle.ta; st.webkitUserSelect = pageStyle.us; st.userSelect = pageStyle.us2;
+      st.overscrollBehavior = pageStyle.ob;
       pageStyle = null;
     }
   }
@@ -2900,7 +3048,10 @@
     lockTouch(true);
     syncTouchUI();
     updateHud();
+    notifyApp();
   }
+  // avisa o app do celular que o jogo começou/parou (ele atualiza os botões na hora)
+  function notifyApp() { if (globalThis.PG_PLATFORM === 'web') { try { dispatchEvent(new Event('pagegame-state')); } catch {} } }
 
   async function tryPlay() {
     if (dead) return false;
@@ -2919,6 +3070,7 @@
     lockTouch(false);
     syncTouchUI();
     updateHud();
+    notifyApp();
   }
 
   function restore() {
@@ -2940,7 +3092,8 @@
     index = newIndex();
     scan = null;
     respawnQ.length = 0; loose.length = 0; eatBuf.clear();
-    fills.length = 0; pendingFills.length = 0; fillBuf.length = 0; near = []; bursts.length = 0; hitCooldown.clear(); shieldUntil = 0; boardKey = '';
+    fills.length = 0; pendingFills.length = 0; fillBuf.length = 0; near = []; bursts.length = 0;
+    grenades.length = 0; WD.trail.length = 0; hitCooldown.clear(); shieldUntil = 0; boardKey = '';
     canvas.remove(); hud.remove(); board.remove(); touchUI.remove();
     mounted = false;
     resetCreature();
