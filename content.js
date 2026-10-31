@@ -1,4 +1,4 @@
-// PageGame v0.25: o bichinho come palavras, imagens e elementos de qualquer página.
+// PageGame v0.26: o bichinho come palavras, imagens e elementos de qualquer página.
 //
 // Como o scan fica leve mesmo em páginas enormes:
 //  1. Nada roda até o Play: o script só é injetado na aba quando você aperta Play.
@@ -2510,11 +2510,12 @@
 
   // =====================================================================
   // BOTS: jogadores de mentira que completam a sala.
-  // - Sozinho você joga com alguns bots; cada jogador de verdade que entra
-  //   tira um bot. Quantos bots e quão fortes eles são depende da
-  //   dificuldade da sala (Fácil / Normal / Difícil).
+  // - A sala comporta até 10 jogadores e os bots completam até a metade:
+  //   sozinho você joga com 4 bots, que entram todos juntos; cada jogador de
+  //   verdade que entra tira um bot. A dificuldade da sala (Fácil / Normal /
+  //   Difícil) decide quão fortes eles são.
   // - 5 tipos (BOT_TYPES): 3 minhocas (Comilão, Caçador, Pistoleiro) e 2
-  //   saltadores (Pulador, Granadeiro). A sala sorteia tipos diferentes.
+  //   saltadores (Pulador, Granadeiro). Cada bot sai com um tipo sorteado.
   // - Eles comem/quebram letras, atiram em você, as minhocas dão trombada
   //   (e levam: as palavras do corpo caem para você comer) e todos entram
   //   no placar.
@@ -2525,7 +2526,6 @@
   //   Se o anfitrião sai, o próximo assume os bots que já estavam na sala.
   // =====================================================================
   // Força pela dificuldade da sala:
-  //   fill  = jogadores na sala contando os bots (você + bots)
   //   spd   = velocidade (1 = a do seu bicho)      turn = quanto vira por quadro
   //   aim   = erro da mira (rad)                   cad  = multiplica o intervalo entre tiros
   //   range = multiplica o alcance da arma
@@ -2533,9 +2533,9 @@
   //   react = de quanto em quanto tempo decide (ms) dash = intervalo do dash na caça (0 = sem)
   //   look  = raio em que procura comida (px)      guns = armas que podem sortear
   const BOT_CFG = {
-    facil:   { fill: 3, spd: 0.70, turn: 0.07, aim: 0.55, cad: 4.2,  range: 0.45, lead: 0,   hunt: 0.10, react: [1100, 1900], dash: 0,    look: 380, guns: ['pistola'] },
-    normal:  { fill: 4, spd: 0.90, turn: 0.10, aim: 0.22, cad: 2.0,  range: 0.75, lead: 0.5, hunt: 0.30, react: [650, 1200],  dash: 2600, look: 520, guns: ['pistola'] },
-    dificil: { fill: 5, spd: 1.10, turn: 0.14, aim: 0.06, cad: 1.0,  range: 1,    lead: 1,   hunt: 0.60, react: [300, 700],   dash: 1600, look: 680, guns: ['pistola', 'metralhadora', 'espingarda', 'laser'] },
+    facil:   { spd: 0.70, turn: 0.07, aim: 0.55, cad: 4.2,  range: 0.45, lead: 0,   hunt: 0.10, react: [1100, 1900], dash: 0,    look: 380, guns: ['pistola'] },
+    normal:  { spd: 0.90, turn: 0.10, aim: 0.22, cad: 2.0,  range: 0.75, lead: 0.5, hunt: 0.30, react: [650, 1200],  dash: 2600, look: 520, guns: ['pistola'] },
+    dificil: { spd: 1.10, turn: 0.14, aim: 0.06, cad: 1.0,  range: 1,    lead: 1,   hunt: 0.60, react: [300, 700],   dash: 1600, look: 680, guns: ['pistola', 'metralhadora', 'espingarda', 'laser'] },
   };
   // Os 5 tipos. Os números multiplicam os da dificuldade (1 = igual).
   //   kind  = 'w' minhoca / 'j' saltador          hunt = chance de caçar (0 = nunca)
@@ -2552,6 +2552,8 @@
                   guns: { facil: ['pistola'], normal: ['pistola'], dificil: ['pistola', 'espingarda'] } },
   };
   const BOT_TYPE_IDS = Object.keys(BOT_TYPES);
+  const ROOM_MAX = 10;                 // uma sala comporta até 10 jogadores
+  const BOT_FILL = ROOM_MAX / 2;       // os bots completam até a metade (você + bots = 5)
   const BOT_COLORS = ['#ff9f43', '#54a0ff', '#a29bfe', '#1dd1a1', '#ff6b81', '#feca57', '#f368e0', '#48dbfb'];
   const BOT_MAX_SEG = 60;
   const BOT_GRAVITY = 0.42;
@@ -2563,10 +2565,10 @@
   const botType = (b) => BOT_TYPES[b.btype] || BOT_TYPES.comilao;
   const botCount = () => { let n = 0; for (const p of peers.values()) if (p.bot) n++; return n; };
 
-  // quantos bots a sala precisa agora
+  // quantos bots a sala precisa agora: completa até a metade da sala
   function botsWanted() {
     if (!S.bots) return 0;
-    const fill = botCfg().fill - (lite ? 1 : 0);                       // celular: um bot a menos
+    const fill = BOT_FILL - (lite ? 1 : 0);                            // celular: um bot a menos
     const humansHere = 1 + (netState === 'online' ? peerCount : 0);
     return Math.max(0, fill - humansHere);
   }
@@ -2606,15 +2608,8 @@
     };
   }
 
-  // a sala sorteia o tipo que tem menos bots (para ter variedade)
-  function chooseBotType() {
-    const count = {};
-    for (const t of BOT_TYPE_IDS) count[t] = 0;
-    for (const p of peers.values()) if (p.bot && count[p.btype] != null) count[p.btype]++;
-    const min = Math.min(...Object.values(count));
-    const free = BOT_TYPE_IDS.filter((t) => count[t] === min);
-    return free[Math.floor(Math.random() * free.length)];
-  }
+  // cada bot sai com um tipo sorteado (pode repetir)
+  const chooseBotType = () => BOT_TYPE_IDS[Math.floor(Math.random() * BOT_TYPE_IDS.length)];
 
   function spawnBot(now) {
     const H = humans();
@@ -2675,7 +2670,7 @@
     }
     const settled = netState !== 'online' || now - onlineSince > 2500;  // espera o Presence dizer quem está na sala
     if (bots.length < want && !scan && settled && now >= nextBotAt) {
-      spawnBot(now);
+      while (bots.length < want) spawnBot(now);                        // entram todos juntos
       nextBotAt = now + 1500;
     }
     if (bots.length) {
