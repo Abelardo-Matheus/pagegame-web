@@ -1,7 +1,7 @@
 const DEFAULTS = {
   speed: 1, growth: 1, maxSegments: 70, color: '#ffd23f',
   eatWords: true, eatImages: true, eatObjects: true, showLabels: true, multiplayer: true,
-  enemies: true, difficulty: 'normal', peerBadge: true, character: 'bicho',
+  enemies: true, difficulty: 'normal', peerBadge: true, character: 'bicho', bots: true,
 };
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => n.toLocaleString('pt-BR');
@@ -147,7 +147,7 @@ $('auth-form').addEventListener('submit', async (e) => {
     } else {
       const { data: taken } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
       if (taken) throw new Error('Esse nome de usuário já está em uso.');
-      const { data, error } = await sb.auth.signUp({ email, password, options: { data: { username } } });
+      const { data, error } = await sb.auth.signUp({ email, password, options: { data: { username }, emailRedirectTo: cfg.CONFIRM_URL } });
       if (error) throw error;
       $('in-password').value = '';
       if (data.session) {
@@ -232,6 +232,7 @@ function render(st) {
   $('players').textContent = st.net === 'online'
     ? (st.players > 1 ? `${st.players} jogando nesta página` : 'só você nesta página')
     : NET[st.net] || '—';
+  if (st.bots) $('players').textContent += ` · 🤖 ${st.bots} ${st.bots === 1 ? 'bot' : 'bots'}`;
   if (st.difficultyName) {
     $('players').textContent += ` · ⚔ ${st.difficultyName}`;
     $('difficulty').textContent = `Esta página é ${st.difficultyName} (fixa para todos aqui). ` +
@@ -282,7 +283,7 @@ function paint() {
     $(key).value = settings[key];
     $(key + 'Out').textContent = label(settings[key]);
   }
-  for (const key of ['eatWords', 'eatImages', 'eatObjects', 'showLabels', 'multiplayer', 'enemies', 'peerBadge']) $(key).checked = settings[key];
+  for (const key of ['eatWords', 'eatImages', 'eatObjects', 'showLabels', 'multiplayer', 'enemies', 'bots', 'peerBadge']) $(key).checked = settings[key];
   for (const b of $('character').children) b.setAttribute('aria-pressed', String(b.dataset.char === settings.character));
   $('char-hint').innerHTML = settings.character === 'saltador'
     ? 'Cai do topo e pula nas letras. <kbd>A</kbd><kbd>D</kbd> anda, <kbd>W</kbd> pula, <kbd>S</kbd> desce, <kbd>Shift</kbd> dash até o mouse, <kbd>Espaço</kbd> joga granada (quica nas letras). A arma atira sozinha, primeiro nos jogadores.'
@@ -293,7 +294,7 @@ function paint() {
 for (const key of Object.keys(sliders)) {
   $(key).addEventListener('input', (e) => { settings[key] = Number(e.target.value); paint(); save(); });
 }
-for (const key of ['eatWords', 'eatImages', 'eatObjects', 'showLabels', 'multiplayer', 'enemies', 'peerBadge']) {
+for (const key of ['eatWords', 'eatImages', 'eatObjects', 'showLabels', 'multiplayer', 'enemies', 'bots', 'peerBadge']) {
   $(key).addEventListener('change', (e) => { settings[key] = e.target.checked; save(); });
 }
 $('character').addEventListener('click', (e) => {

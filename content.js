@@ -1,4 +1,4 @@
-// PageGame v0.19: o bichinho come palavras, imagens e elementos de qualquer página.
+// PageGame v0.24: o bichinho come palavras, imagens e elementos de qualquer página.
 //
 // Como o scan fica leve mesmo em páginas enormes:
 //  1. Nada roda até o Play: o script só é injetado na aba quando você aperta Play.
@@ -30,7 +30,7 @@
   const DEFAULTS = {
     speed: 1, growth: 1, maxSegments: 70, color: '#ffd23f',
     eatWords: true, eatImages: true, eatObjects: true, showLabels: true, multiplayer: true,
-    enemies: true, difficulty: 'normal', character: 'bicho',
+    enemies: true, difficulty: 'normal', character: 'bicho', bots: true,
   };
   let S = { ...DEFAULTS };
   chrome.storage.local.get('settings', (r) => { S = { ...DEFAULTS, ...(r.settings || {}) }; });
@@ -762,6 +762,7 @@
   function nearestTarget(ox, oy, mx, my) {
     let best = { me: true, x: mx, y: my }, bd = Math.hypot(mx - ox, my - oy);
     for (const p of peers.values()) {
+      if (p.bot) continue;                                         // inimigas miram só em gente de verdade
       const h = p.segs[0];
       const dd = Math.hypot(h.x - ox, h.y - oy);
       if (dd < bd) { bd = dd; best = { me: false, x: h.x, y: h.y }; }
@@ -1470,7 +1471,7 @@
 
   // minha cabeça bateu em outro bicho?
   function pvpCheck(now) {
-    if (netState !== 'online' || !peers.size || now < shieldUntil) return;
+    if (!peers.size || now < shieldUntil) return;                 // peers inclui os bots (funciona até offline)
     const hx = segs[0].x + scrollX, hy = segs[0].y + scrollY, R = mouthR();
     for (const [id, p] of peers) {
       if (p.kind === 'j' || p.iv || now < (hitCooldown.get(id) || 0)) continue;   // saltador não leva trombada
@@ -1485,7 +1486,7 @@
       if (!hit && Math.hypot(h.x - hx, h.y - hy) < R * 0.7 + pr * 1.3 && p.n < segs.length) hit = true;
       if (!hit) continue;
       hitCooldown.set(id, now + 2500);
-      netEvent({ k: 'hit', v: id });
+      peerHit(id, now);
       floaters.push({ text: 'POW!', x: hx, y: hy - 16, life: 1, good: true });
     }
   }
@@ -1677,6 +1678,9 @@
       }
     } else if (m.k === 'hit') {
       if (m.v === myId) dropWords(now);
+      else { const b = peers.get(m.v); if (b && b.local) botDrop(b, now); }   // trombaram num bot meu
+    } else if (m.k === 'bots') {
+      onBots(m);
     } else if (m.k === 'drop' && Array.isArray(m.items)) {
       const o = fromAnchor(m.o || {});
       for (const it of m.items.slice(0, 40)) {
@@ -1700,7 +1704,7 @@
         const o = gunPos();
         hurtMe(now, o.x, o.y);
         sendMyPosition(true);
-      }
+      } else { const b = peers.get(m.v); if (b && b.local) botHurt(b, now); }   // atiraram num bot meu
     } else if (m.k === 'pick') {
       const i = loose.findIndex((l) => l.id === m.id);
       if (i >= 0) loose.splice(i, 1);
@@ -2197,13 +2201,13 @@
     return best;
   }
 
-  function spawnShots(ox, oy, ang, wid, mine) {
+  function spawnShots(ox, oy, ang, wid, mine, bot) {
     const W = WEAPONS[wid] || WEAPONS.pistola;
     const now = performance.now();
     for (let k = 0; k < W.n; k++) {
       const a = ang + (W.n > 1 ? (k / (W.n - 1) - 0.5) * W.spread : (Math.random() - 0.5) * W.spread);
       shots.push({ x: ox + Math.cos(a) * 14, y: oy + Math.sin(a) * 14, vx: Math.cos(a) * W.spd, vy: Math.sin(a) * W.spd,
-                   born: now, w: wid, mine, life: W.life || (W.range / W.spd) * 16.7 + 150, hit: W.pierce ? new Set() : null });
+                   born: now, w: wid, mine, bot, life: W.life || (W.range / W.spd) * 16.7 + 150, hit: W.pierce ? new Set() : null });
     }
   }
 
@@ -2226,19 +2230,22 @@
   }
 
   // o tiro (meu) acertou um jogador? (cada um confere o próprio tiro)
+  function shotTouchesPeer(s, p) {
+    if (p.kind === 'j') {
+      const h = p.segs[0];
+      return Math.abs(s.x - h.x) < JW / 2 + 3 && Math.abs(s.y - h.y) < JH / 2 + 3;
+    }
+    const pr = 4.5 * p.scale * 1.5;
+    for (let i = 0; i < p.segs.length; i++) {
+      const g = p.segs[i];
+      if (Math.abs(s.x - g.x) < pr && Math.abs(s.y - g.y) < pr) return true;
+    }
+    return false;
+  }
   function shotHitsPeer(s) {
     for (const [id, p] of peers) {
       if (p.iv || (s.hit && s.hit.has(id))) continue;
-      if (p.kind === 'j') {
-        const h = p.segs[0];
-        if (Math.abs(s.x - h.x) < JW / 2 + 3 && Math.abs(s.y - h.y) < JH / 2 + 3) return id;
-        continue;
-      }
-      const pr = 4.5 * p.scale * 1.5;
-      for (let i = 0; i < p.segs.length; i++) {
-        const g = p.segs[i];
-        if (Math.abs(s.x - g.x) < pr && Math.abs(s.y - g.y) < pr) return id;
-      }
+      if (shotTouchesPeer(s, p)) return id;
     }
     return null;
   }
@@ -2256,12 +2263,16 @@
         if (s.mine && Wp.boom && now - s.born > (s.life || 1200)) breakCircle(s.x, s.y, Wp.boom);   // bazuca explode no fim
         shots.splice(i, 1); continue;
       }
+      if (s.bot) {                                                  // tiro de um bot meu
+        if (botShotHits(s, now)) shots.splice(i, 1);
+        continue;
+      }
       if (!s.mine) continue;                                        // tiro dos outros: só aparece
       let done = false;
       // jogadores primeiro
       const pid = shotHitsPeer(s);
       if (pid) {
-        netEvent({ k: 'ph', v: pid, w: s.w });
+        peerShot(pid, s.w, now);
         floaters.push({ text: '✦', x: s.x, y: s.y, life: 0.5, good: true });
         const pp = peers.get(pid); if (pp) pp.iv = true;             // pisca até a próxima posição chegar
         if (s.hit) s.hit.add(pid); else done = true;
@@ -2477,6 +2488,7 @@
     autoFire(now);
     updateShots(now);
     flushShots(now);
+    updateBots(now);
     if (JP) updateGrenades(now);
     looseCheck(now);
     if (!JP) pvpCheck(now);
@@ -2493,6 +2505,427 @@
       p.life -= 0.06;
       if (p.life <= 0) particles.splice(i, 1);
     }
+  }
+
+  // =====================================================================
+  // BOTS: jogadores de mentira que completam a sala.
+  // - Sozinho você joga com alguns bots; cada jogador de verdade que entra
+  //   tira um bot. Quantos bots e quão fortes eles são depende da
+  //   dificuldade da sala (Fácil / Normal / Difícil).
+  // - Eles comem letras, crescem, atiram em você, dão trombada (e levam
+  //   trombada: as palavras do corpo deles caem para você comer) e entram
+  //   no placar.
+  // - Rede: só o anfitrião (menor id) mexe os bots. Ele manda a posição de
+  //   todos num único evento {k:'bots'} a cada 250 ms; os outros desenham
+  //   como se fossem jogadores. Tiro ou trombada num bot vai para o
+  //   anfitrião com o id do bot ('bot:...'), igual a um jogador.
+  //   Se o anfitrião sai, o próximo assume os bots que já estavam na sala.
+  // =====================================================================
+  //   fill  = jogadores na sala contando os bots (você + bots)
+  //   spd   = velocidade (1 = a do seu bicho)      turn = quanto vira por quadro
+  //   aim   = erro da mira (rad)                   cad  = multiplica o intervalo entre tiros
+  //   range = multiplica o alcance da arma
+  //   lead  = quanto prevê para onde você vai      hunt = chance de te caçar em vez de comer
+  //   react = de quanto em quanto tempo decide (ms) dash = intervalo do dash na caça (0 = sem)
+  //   look  = raio em que procura comida (px)      guns = armas que podem sortear
+  const BOT_CFG = {
+    facil:   { fill: 3, spd: 0.70, turn: 0.07, aim: 0.50, cad: 3.4,  range: 0.5,  lead: 0,   hunt: 0.10, react: [1100, 1900], dash: 0,    look: 380, guns: ['pistola'] },
+    normal:  { fill: 4, spd: 0.90, turn: 0.10, aim: 0.22, cad: 2.0,  range: 0.75, lead: 0.5, hunt: 0.30, react: [650, 1200],  dash: 2600, look: 520, guns: ['pistola'] },
+    dificil: { fill: 5, spd: 1.10, turn: 0.14, aim: 0.07, cad: 1.15, range: 1,    lead: 1,   hunt: 0.60, react: [300, 700],   dash: 1600, look: 680, guns: ['pistola', 'metralhadora', 'espingarda', 'laser'] },
+  };
+  const BOT_NAMES = ['Traça', 'Cupim', 'Lagarta', 'Minhoca', 'Tatu', 'Besouro', 'Lesma', 'Grilo', 'Formiga', 'Joaninha'];
+  const BOT_COLORS = ['#ff9f43', '#54a0ff', '#a29bfe', '#1dd1a1', '#ff6b81', '#feca57', '#f368e0', '#48dbfb'];
+  const BOT_MAX_SEG = 60;
+  const bots = [];                   // os bots que EU controlo (também estão em peers)
+  let botSeq = 0, nextBotAt = 0, botSentAt = 0, botsWereSent = false;
+  const isBot = (id) => typeof id === 'string' && id.startsWith('bot:');
+  const botCfg = () => BOT_CFG[roomDifficulty()] || BOT_CFG.normal;
+  const botCount = () => { let n = 0; for (const p of peers.values()) if (p.bot) n++; return n; };
+
+  // quantos bots a sala precisa agora
+  function botsWanted() {
+    if (!S.bots) return 0;
+    const fill = botCfg().fill - (lite ? 1 : 0);                       // celular: um bot a menos
+    const humansHere = 1 + (netState === 'online' ? peerCount : 0);
+    return Math.max(0, fill - humansHere);
+  }
+
+  // jogadores de verdade (eu + os outros), em coordenadas da página
+  function humans() {
+    const out = [];
+    const ivMe = performance.now() < Math.max(shieldUntil, invulnerableUntil);
+    if (isJumper()) {
+      out.push({ id: 'me', me: true, j: true, x: J.x, y: J.y - JH / 2, n: 1, h: Math.atan2(J.vy, J.vx), v: Math.hypot(J.vx, J.vy), iv: ivMe });
+    } else {
+      out.push({ id: 'me', me: true, j: false, x: segs[0].x + scrollX, y: segs[0].y + scrollY, n: segs.length, h: heading, v: speedNow, iv: ivMe });
+    }
+    for (const [id, p] of peers) {
+      if (p.bot) continue;
+      out.push({ id, p, j: p.kind === 'j', x: p.segs[0].x, y: p.segs[0].y, n: p.n, h: p.heading, v: p.speed, iv: !!p.iv });
+    }
+    return out;
+  }
+  // segmento i do corpo de um jogador (coordenadas da página)
+  const bodyOf = (u) => (u.me ? segs.map((s) => ({ x: s.x + scrollX, y: s.y + scrollY })) : u.p.segs);
+  const scaleOf = (u) => (u.me ? scale() : u.p.scale);
+
+  function newBotAi(now, fromPeer) {
+    const C = botCfg();
+    return {
+      food: fromPeer ? Math.max(0, (fromPeer.n - 4) * 2) : 0,
+      words: fromPeer ? fromPeer.pts || 0 : 0, loot: 0, hits: 0,
+      mode: 'eat', goal: null, thinkAt: 0, shotAt: now + 2000, dashAt: 0, dashUntil: 0,
+      shield: 0, hurt: 0, sh: [], hitCd: new Map(), carry: null,
+      gun: C.guns[Math.floor(Math.random() * C.guns.length)],
+    };
+  }
+
+  function spawnBot(now) {
+    const H = humans();
+    const near = H[Math.floor(Math.random() * H.length)];
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const x = clamp(near.x + side * rand(260, 480), 30, docW() - 30);
+    const y = clamp(near.y + rand(-220, 220), 30, docH() - 30);
+    const usedNames = new Set(), usedColors = new Set([S.color]);
+    for (const p of peers.values()) { usedNames.add(p.name); usedColors.add(p.color); }
+    const freeName = BOT_NAMES.filter((n) => !usedNames.has('🤖 ' + n));
+    const name = '🤖 ' + (freeName.length ? freeName[Math.floor(Math.random() * freeName.length)] : 'Bot ' + (botSeq + 1));
+    const color = BOT_COLORS.find((c) => !usedColors.has(c)) || BOT_COLORS[botSeq % BOT_COLORS.length];
+    const id = 'bot:' + String(myId || 'local').slice(0, 6) + '-' + (++botSeq);
+    const b = {
+      id, bot: true, local: true, kind: 'w', name, color,
+      segs: [{ x, y }], heading: side > 0 ? Math.PI : 0, scale: 1, mouthOpen: 0, speed: 0, t: 0,
+      labels: [], n: 4, pts: 0, iv: false, seen: now, target: { x, y }, targetHeading: 0,
+      ai: newBotAi(now),
+    };
+    while (b.segs.length < 4) b.segs.push({ x, y });
+    bots.push(b);
+    peers.set(id, b);
+    floaters.push({ text: name + ' entrou', x, y: y - 24, life: 1, good: false });
+  }
+
+  // virei anfitrião: os bots que o anterior mexia passam a ser meus
+  function adoptBot(id, p, now) {
+    p.id = id;
+    p.local = true;
+    p.labels = Array.isArray(p.labels) ? p.labels : [];
+    p.ai = newBotAi(now, p);
+    bots.push(p);
+  }
+
+  function removeBot(b) {
+    const i = bots.indexOf(b);
+    if (i >= 0) bots.splice(i, 1);
+    peers.delete(b.id);
+  }
+
+  function updateBots(now) {
+    if (netState === 'connecting') return;                            // ainda não sabe se é o anfitrião
+    if (!isHost()) {                                                   // outro mexe os bots
+      if (bots.length) { for (const b of bots.splice(0)) peers.delete(b.id); }
+      return;
+    }
+    for (const [id, p] of peers) if (p.bot && !p.local) adoptBot(id, p, now);
+    const want = botsWanted();
+    while (bots.length > want) {                                       // entrou gente: sai um bot
+      const b = bots[bots.length - 1];
+      floaters.push({ text: b.name + ' saiu', x: b.segs[0].x, y: b.segs[0].y - 24, life: 1, good: true });
+      removeBot(b);
+    }
+    const settled = netState !== 'online' || now - onlineSince > 2500;  // espera o Presence dizer quem está na sala
+    if (bots.length < want && !scan && settled && now >= nextBotAt) {
+      spawnBot(now);
+      nextBotAt = now + 1500;
+    }
+    if (bots.length) {
+      const H = humans();
+      for (const b of bots) tickBot(b, H, now);
+    }
+    botBroadcast(now);
+  }
+
+  // escolhe um lugar com letras perto do jogador (para o bot ficar à vista)
+  function findFood(b, tg) {
+    const C = botCfg(), h = b.segs[0];
+    const cx = tg ? h.x + (tg.x - h.x) * 0.4 : h.x, cy = tg ? h.y + (tg.y - h.y) * 0.4 : h.y;
+    const ix = index, r = ix.rects;
+    let checks = 0;
+    for (let k = 0; k < 10 && checks < 3; k++) {
+      const px = cx + rand(-C.look, C.look), py = cy + rand(-C.look * 0.7, C.look * 0.7);
+      const list = ix.grid.get(cellKey(Math.floor(px / CELL), Math.floor(py / CELL)));
+      if (!list) continue;
+      const id = list[Math.floor(Math.random() * list.length)];
+      if (id >= OBJ) continue;
+      const node = ix.nodes[id];
+      if (!node || !node.isConnected) continue;
+      checks++;
+      if (wordsOf(node).left === 0) continue;
+      return { x: r[id * 4] + rand(0, r[id * 4 + 2]), y: r[id * 4 + 1] + r[id * 4 + 3] * rand(0.2, 0.8) };
+    }
+    const base = tg || h;
+    return { x: clamp(base.x + rand(-300, 300), 20, docW() - 20), y: clamp(base.y + rand(-200, 200), 20, docH() - 20) };
+  }
+
+  function tickBot(b, H, now) {
+    const A = b.ai, C = botCfg(), h = b.segs[0];
+    b.t++;
+    b.scale = 1 + Math.min(A.food, 400) / 120;
+    const R = 8 + 6 * b.scale;
+
+    // jogador de verdade mais perto
+    let tg = null, td = Infinity;
+    for (const u of H) { const d = Math.hypot(u.x - h.x, u.y - h.y); if (d < td) { td = d; tg = u; } }
+
+    if (tg && td > 900 && A.mode !== 'back') {                       // longe de todo mundo: volta
+      A.mode = 'back';
+      A.goal = { x: tg.x + rand(-200, 200), y: tg.y + rand(-150, 150) };
+    } else if (now >= A.thinkAt || !A.goal || (A.mode === 'back' && td < 450)) {
+      A.thinkAt = now + rand(C.react[0], C.react[1]);
+      const big = tg && (b.segs.length >= tg.n * 0.7 || roomDifficulty() === 'dificil');
+      A.mode = tg && !tg.j && !tg.iv && td < C.look * 1.4 && big && Math.random() < C.hunt ? 'hunt' : 'eat';
+      if (A.mode === 'eat') A.goal = findFood(b, tg);
+    }
+
+    // para onde vai
+    let gx, gy;
+    if (A.mode === 'hunt' && tg) {
+      // mira no meio do corpo (trombada) e prevê para onde o jogador vai
+      const body = bodyOf(tg), mid = body[Math.min(body.length - 1, Math.max(1, Math.floor(body.length / 2)))] || tg;
+      gx = mid.x + Math.cos(tg.h) * tg.v * 14 * C.lead;
+      gy = mid.y + Math.sin(tg.h) * tg.v * 14 * C.lead;
+    } else { gx = A.goal.x; gy = A.goal.y; }
+    const dx = gx - h.x, dy = gy - h.y, dist = Math.hypot(dx, dy);
+    const turn = C.turn * (A.mode === 'hunt' ? 1.25 : 1);
+    b.heading = norm(b.heading + clamp(norm(Math.atan2(dy, dx) - b.heading), -turn, turn));
+    let sp = 3.4 * C.spd * (0.8 + b.scale * 0.3) * Math.min(1, dist / 60 + 0.35);
+    if (C.dash && A.mode === 'hunt' && dist < 200 && now > A.dashAt) { A.dashAt = now + C.dash; A.dashUntil = now + 260; }
+    if (now < A.dashUntil) sp = Math.max(sp, 3.4 * 3);
+    b.speed += (sp - b.speed) * 0.15;
+    h.x = clamp(h.x + Math.cos(b.heading) * b.speed, R, docW() - R);
+    h.y = clamp(h.y + Math.sin(b.heading) * b.speed, R, docH() - R);
+    if (A.mode !== 'hunt' && dist < 18) A.thinkAt = 0;               // chegou: escolhe outro lugar
+
+    // corpo segue a cabeça
+    const target = Math.min(BOT_MAX_SEG, 4 + Math.floor(A.food / 2));
+    while (b.segs.length < target) b.segs.push({ ...b.segs[b.segs.length - 1] });
+    const gap = 7 * b.scale;
+    for (let i = 1; i < b.segs.length; i++) {
+      const a = b.segs[i - 1], c = b.segs[i];
+      const ex = c.x - a.x, ey = c.y - a.y, d = Math.hypot(ex, ey) || 1;
+      if (d > gap) { c.x = a.x + (ex / d) * gap; c.y = a.y + (ey / d) * gap; }
+    }
+    b.n = b.segs.length;
+    b.mouthOpen = Math.max(0, b.mouthOpen - 0.08);
+    b.iv = now < Math.max(A.shield, A.hurt);
+
+    botEat(b, h.x, h.y, R);
+    botLoose(b, h.x, h.y, R, now);
+    botShoot(b, H, now);
+    botRam(b, H, now);
+    b.pts = Math.max(0, A.words + A.loot - A.hits * HIT_PENALTY);
+  }
+
+  // o bot come as letras que encostam na boca (igual ao seu bicho)
+  function botEat(b, hx, hy, R) {
+    if (!S.eatWords || !hasHighlight) return;
+    const ix = index, A = b.ai;
+    stamp++;
+    const x0 = Math.floor((hx - R) / CELL), x1 = Math.floor((hx + R) / CELL);
+    const y0 = Math.floor((hy - R) / CELL), y1 = Math.floor((hy + R) / CELL);
+    for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) {
+      const list = ix.grid.get(cellKey(cx, cy));
+      if (!list) continue;
+      for (const id of list) {
+        if (id >= OBJ || chunkStamp[id] === stamp) continue;
+        chunkStamp[id] = stamp;
+        const r = ix.rects;
+        if (!circleHitsRect(hx, hy, R, r[id * 4], r[id * 4 + 1], r[id * 4 + 2], r[id * 4 + 3])) continue;
+        const node = ix.nodes[id];
+        if (!node.isConnected) continue;
+        const d = wordsOf(node);
+        if (d.left === 0) continue;
+        const wr = d.rects;
+        for (let w = 0; w < d.starts.length; w++) {
+          if (!d.wl[w] || wr[w * 4 + 2] === 0) continue;
+          if (!circleHitsRect(hx, hy, R, wr[w * 4], wr[w * 4 + 1], wr[w * 4 + 2], wr[w * 4 + 3])) continue;
+          const L = lettersOf(node, d, w), lr = L.rects;
+          let changed = false;
+          for (let k = 0; k < L.offs.length; k++) {
+            const o = L.offs[k];
+            if (d.ate[o] || lr[k * 4 + 2] === 0) continue;
+            if (!circleHitsRect(hx, hy, R, lr[k * 4], lr[k * 4 + 1], lr[k * 4 + 2], lr[k * 4 + 3])) continue;
+            hideLetter(node, d, w, o, L.lens[k]);
+            shareEat(node, o);
+            A.words++; A.food += 0.3; b.mouthOpen = 1;
+            const ch = node.data.slice(o, o + L.lens[k]);
+            const key = id + ':' + w;
+            if (A.carry === key && b.labels.length) b.labels[0] = (b.labels[0] + ch).slice(-14);
+            else { b.labels.unshift(ch); if (b.labels.length > 40) b.labels.pop(); A.carry = key; }
+            changed = true;
+          }
+          if (changed) wordChanged(node, d, w, 'comeu', false);
+        }
+      }
+    }
+  }
+
+  // o bot também pega as palavras soltas (de trombadas)
+  function botLoose(b, hx, hy, R, now) {
+    for (let i = loose.length - 1; i >= 0; i--) {
+      const l = loose[i];
+      if (now - l.born < FLY_MS) continue;
+      const half = Math.max(10, l.text.length * 4);
+      if (Math.abs(l.x - hx) < half + R && Math.abs(l.y - hy) < 8 + R) {
+        loose.splice(i, 1);
+        const pts = Math.max(1, [...l.text].length);
+        b.ai.loot += pts; b.ai.food += pts * 0.3; b.mouthOpen = 1;
+        b.labels.unshift(l.text); if (b.labels.length > 40) b.labels.pop();
+        netEvent({ k: 'pick', id: l.id });
+      }
+    }
+  }
+
+  // o bot atira no jogador de verdade mais perto (mira pior no Fácil)
+  function botShoot(b, H, now) {
+    const A = b.ai, C = botCfg();
+    if (now < A.shotAt) return;
+    const W = WEAPONS[A.gun] || WEAPONS.pistola, h = b.segs[0];
+    let tg = null, td = W.range * C.range;
+    for (const u of H) {
+      if (u.iv) continue;
+      const d = Math.hypot(u.x - h.x, u.y - h.y);
+      if (d < td) { td = d; tg = u; }
+    }
+    if (!tg) { A.shotAt = now + 300; return; }
+    A.shotAt = now + W.cad * C.cad * rand(0.85, 1.25);
+    const tt = td / W.spd;                                             // quadros até chegar
+    const px = tg.x + Math.cos(tg.h) * tg.v * tt * C.lead, py = tg.y + Math.sin(tg.h) * tg.v * tt * C.lead;
+    const ang = Math.atan2(py - h.y, px - h.x) + (Math.random() - 0.5) * 2 * C.aim;
+    spawnShots(h.x, h.y, ang, A.gun, false, b.id);
+    A.sh.push(+ang.toFixed(2));
+  }
+
+  // a cabeça do bot bateu no corpo de um jogador? (mesma regra da trombada entre jogadores)
+  function botRam(b, H, now) {
+    if (b.iv) return;
+    const A = b.ai, h = b.segs[0], R = 8 + 6 * b.scale;
+    for (const u of H) {
+      if (u.j || u.iv || now < (A.hitCd.get(u.id) || 0)) continue;
+      if (Math.hypot(u.x - h.x, u.y - h.y) > 900) continue;
+      const body = bodyOf(u), pr = 4.5 * scaleOf(u) * 1.4;
+      let hit = false;
+      for (let i = 1; i < body.length && !hit; i++) if (Math.hypot(body[i].x - h.x, body[i].y - h.y) < R * 0.7 + pr) hit = true;
+      if (!hit && Math.hypot(body[0].x - h.x, body[0].y - h.y) < R * 0.7 + pr * 1.3 && u.n < b.segs.length) hit = true;
+      if (!hit) continue;
+      A.hitCd.set(u.id, now + 2500);
+      if (u.me) dropWords(now); else netEvent({ k: 'hit', v: u.id });
+      floaters.push({ text: 'POW!', x: h.x, y: h.y - 16, life: 1, good: false });
+    }
+  }
+
+  // tiro de bot: acertou alguém? (só o anfitrião confere)
+  function botShotHits(s, now) {
+    if (!(s.hit && s.hit.has('me')) && now >= Math.max(shieldUntil, invulnerableUntil)) {
+      let hitMe = false;
+      if (isJumper()) hitMe = Math.abs(s.x - J.x) < JW / 2 + 3 && Math.abs(s.y - (J.y - JH / 2)) < JH / 2 + 3;
+      else {
+        const pr = 4.5 * scale() * 1.5;
+        for (let i = 0; i < segs.length && !hitMe; i++) hitMe = Math.abs(s.x - segs[i].x - scrollX) < pr && Math.abs(s.y - segs[i].y - scrollY) < pr;
+      }
+      if (hitMe) {
+        const o = gunPos();
+        hurtMe(now, o.x, o.y);
+        sendMyPosition(true);
+        if (s.hit) s.hit.add('me'); else return true;
+      }
+    }
+    for (const [id, p] of peers) {
+      if (p.bot || p.iv || (s.hit && s.hit.has(id))) continue;
+      if (!shotTouchesPeer(s, p)) continue;
+      netEvent({ k: 'ph', v: id, w: s.w });
+      p.iv = true;
+      floaters.push({ text: '✦', x: s.x, y: s.y, life: 0.5, good: false });
+      if (s.hit) s.hit.add(id); else return true;
+    }
+    return false;
+  }
+
+  // levou trombada: as palavras do corpo do bot saem voando
+  function botDrop(b, now) {
+    const A = b.ai;
+    if (!A || now < A.shield) return;
+    A.shield = now + 3000;
+    A.thinkAt = 0; A.mode = 'eat';
+    const k = Math.min(b.labels.length, 12);                         // menos que um jogador: não enche a tela
+    const words = b.labels.splice(0, k);
+    A.food = Math.max(0, A.food - Math.max(k, b.segs.length / 3) * 1.5);
+    const target = Math.max(4, Math.min(BOT_MAX_SEG, 4 + Math.floor(A.food / 2)));
+    if (b.segs.length > target) b.segs.length = target;
+    const ox = b.segs[0].x, oy = b.segs[0].y;
+    const items = words.map((text) => {
+      const x = clamp(ox + rand(-350, 350), 20, docW() - 20), y = clamp(oy + rand(-250, 250), 20, docH() - 20);
+      const id = b.id.slice(4) + '-w' + (++looseSeq);
+      addLoose(id, text, ox, oy, x, y, b.color, now);
+      return { id, t: text, a: toAnchor(x, y) };
+    });
+    floaters.push({ text: 'POW!', x: ox, y: oy - 20, life: 1, good: true });
+    if (items.length) netEvent({ k: 'drop', o: toAnchor(ox, oy), c: b.color, items });
+  }
+
+  // levou tiro: perde pontos e pisca
+  function botHurt(b, now) {
+    const A = b.ai;
+    if (!A || now < Math.max(A.hurt, A.shield)) return;
+    A.hits++;
+    A.hurt = now + 600;
+    floaters.push({ text: `-${HIT_PENALTY}`, x: b.segs[0].x, y: b.segs[0].y - 10, life: 1, good: true });
+  }
+
+  // eu acertei um jogador ou bot (com tiro ou trombada): bot meu resolve aqui, o resto vai pela rede
+  function peerHit(id, now) {
+    const b = peers.get(id);
+    if (b && b.local) botDrop(b, now); else netEvent({ k: 'hit', v: id });
+  }
+  function peerShot(id, w, now) {
+    const b = peers.get(id);
+    if (b && b.local) botHurt(b, now); else netEvent({ k: 'ph', v: id, w });
+  }
+
+  // anfitrião: manda a posição dos bots (e os tiros deles) para a sala
+  function botBroadcast(now) {
+    if (netState !== 'online') { for (const b of bots) b.ai.sh.length = 0; return; }
+    if (now < botSentAt || (!bots.length && !botsWereSent)) return;
+    botSentAt = now + 250;
+    botsWereSent = bots.length > 0;
+    netEvent({
+      k: 'bots',
+      b: bots.map((b) => ({
+        id: b.id, a: toAnchor(b.segs[0].x, b.segs[0].y), h: +b.heading.toFixed(2), n: b.segs.length,
+        s: +b.scale.toFixed(2), c: b.color, u: b.name, pt: b.pts, iv: b.iv ? 1 : 0,
+        w: b.ai.gun, sh: b.ai.sh.splice(0, 8), lb: b.labels.slice(0, 8),
+      })),
+    });
+  }
+
+  // não sou o anfitrião: desenho os bots dele como jogadores
+  function onBots(m) {
+    if (!Array.isArray(m.b) || isHost()) return;
+    const seen = new Set();
+    for (const x of m.b.slice(0, 8)) {
+      if (!x || !isBot(x.id) || !x.a) continue;
+      seen.add(x.id);
+      onPeerPos({ id: x.id, a: x.a, h: x.h, n: x.n, s: x.s, c: x.c, pt: x.pt, iv: x.iv, k: 'w' });
+      const p = peers.get(x.id);
+      if (!p) continue;
+      p.bot = true;
+      p.name = String(x.u || '🤖 Bot').slice(0, 24);
+      p.labels = Array.isArray(x.lb) ? x.lb.slice(0, 8).map((s) => String(s).slice(0, 14)) : null;
+      if (Array.isArray(x.sh)) {
+        const w = WEAPONS[x.w] ? x.w : 'pistola';
+        for (const a of x.sh.slice(0, 8)) spawnShots(p.segs[0].x, p.segs[0].y, +a || 0, w, false);
+      }
+    }
+    for (const [id, p] of peers) if (p.bot && !p.local && !seen.has(id)) peers.delete(id);
   }
 
   // ---------- Desenho ----------
@@ -2524,7 +2957,7 @@
   board.dataset.pagegame = '';
   let boardKey = '';
   function updateBoard() {
-    const show = netState === 'online';          // só com o multiplayer ligado
+    const show = netState === 'online' || peers.size > 0;   // multiplayer ligado ou tem bots
     board.style.visibility = show ? 'visible' : 'hidden';
     if (!show) return;
     const rows = [{ name: '@' + (myName || 'você'), pts: points(), color: S.color, me: true }];
@@ -2871,7 +3304,7 @@
       const p = peers.get(id);
       if (p) { if (meta.username) p.name = '@' + meta.username; if (meta.color) p.color = meta.color; }
     }
-    for (const id of peers.keys()) if (!ids.has(id)) peers.delete(id);   // saiu da sala
+    for (const id of peers.keys()) if (!ids.has(id) && !isBot(id)) peers.delete(id);   // saiu da sala (bots ficam)
     peerCount = ids.size;
     // Alguém entrou: quem já era o anfitrião (e já estava na sala antes) manda
     // as inimigas vivas e as palavras que já foram comidas.
@@ -2890,6 +3323,7 @@
   function updatePeers() {
     const now = performance.now();
     for (const [id, p] of peers) {
+      if (p.local) continue;                                           // bot meu: quem mexe é o updateBots
       if (now - (p.seen || now) > 15000) { peers.delete(id); continue; }  // sumiu sem avisar
       p.t++;
       const h = p.segs[0];
@@ -2950,7 +3384,7 @@
   }
 
   async function mpDisconnect() {
-    peers.clear(); peerCount = 0; roomIds.clear();
+    peers.clear(); peerCount = 0; roomIds.clear(); bots.length = 0; botsWereSent = false;
     netState = 'off';
     if (window.__pgNet) await window.__pgNet.disconnect();
   }
@@ -3020,6 +3454,8 @@
     if (hits) txt += `  |  levou ${fmt(hits)} ${hits === 1 ? 'tiro' : 'tiros'}`;
     if (S.enemies) txt += `  |  ⚔ ${DIFF_NAME[roomDifficulty()]}`;
     if (netState === 'online') txt += peerCount ? `  |  ${peerCount + 1} jogando aqui` : '  |  só você aqui';
+    const nb = botCount();
+    if (nb) txt += `  |  🤖 ${nb} ${nb === 1 ? 'bot' : 'bots'}`;
     hud.textContent = txt;
     updateBoard();
   }
@@ -3300,7 +3736,7 @@
       found: { words: ix.words, images: ix.images, others: ix.others, nodes: ix.n },
       eaten: { ...eaten, enemies: enemiesEaten }, hits, points: points(),
       difficulty: roomDifficulty(), difficultyName: DIFF_NAME[roomDifficulty()], enemyMax: diff().max, scanMs: Math.round(scan ? scan.ms : lastScanMs),
-      net: netState, players: netState === 'online' ? peerCount + 1 : 0,
+      net: netState, players: netState === 'online' ? peerCount + 1 : 0, bots: botCount(),
       account: account && { total_score: account.total_score, coins: account.coins },
     };
   }
