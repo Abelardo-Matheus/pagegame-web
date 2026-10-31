@@ -22,7 +22,7 @@
   const DEFAULTS = {
     speed: 1, growth: 1, maxSegments: 70, color: '#ffd23f',
     eatWords: true, eatImages: true, eatObjects: true, showLabels: true, multiplayer: true,
-    enemies: true, difficulty: 'normal', character: 'bicho', lang: 'pt',
+    enemies: true, difficulty: 'normal', character: 'bicho', lang: 'pt', bots: true,
   };
   let settings = { ...DEFAULTS };
   const save = () => store.set({ settings });
@@ -33,6 +33,7 @@
     for (const b of $('colors').children) b.setAttribute('aria-pressed', String(b.dataset.color === settings.color));
     $('enemies').checked = settings.enemies;
     $('multiplayer').checked = settings.multiplayer;
+    $('bots').checked = settings.bots;
     $('char-hint').textContent = settings.character === 'saltador'
       ? 'Cai do topo e pula nas letras. Botões: ◀ ▶ andam, ⤒ pula, ⤓ desce, ⚡ dash, 💣 granada. A arma atira sozinha (primeiro nos jogadores).'
       : 'Anda sempre para a frente: segure ◀ ou ▶ para virar. Come as letras e cresce. ⚡ dá um dash. A arma atira sozinha (primeiro nos jogadores).';
@@ -46,7 +47,7 @@
   pick('character', 'character', 'char');
   pick('lang', 'lang', 'lang');
   pick('colors', 'color', 'color');
-  for (const k of ['enemies', 'multiplayer']) $(k).addEventListener('change', (e) => { settings[k] = e.target.checked; save(); });
+  for (const k of ['enemies', 'multiplayer', 'bots']) $(k).addEventListener('change', (e) => { settings[k] = e.target.checked; save(); });
 
   // ---------- Conta ----------
   const ERRORS = [
@@ -119,7 +120,7 @@
       } else {
         const { data: taken } = await sb.from('profiles').select('id').eq('username', username).maybeSingle();
         if (taken) throw new Error('Esse nome de usuário já está em uso.');
-        const { data, error } = await sb.auth.signUp({ email, password, options: { data: { username } } });
+        const { data, error } = await sb.auth.signUp({ email, password, options: { data: { username }, emailRedirectTo: cfg.CONFIRM_URL } });
         if (error) throw error;
         if (data.session) await enter(data.user);
         else { setMode('login'); authMsg(`Conta criada. Confirme o e-mail enviado para ${email} e depois entre.`, 'ok'); }
@@ -205,7 +206,8 @@
     $('fab').textContent = st && st.mounted ? '▶ Continuar' : '▶ Jogar';
     $('play').textContent = running ? '❚❚ Pausar' : (st && st.mounted ? '▶ Continuar' : '▶ Jogar');
     if (!st || !st.mounted) { $('stats').textContent = 'Abra um artigo e toque em Jogar.'; return; }
-    const players = st.net === 'online' ? ` · ${st.players} ${st.players === 1 ? 'jogador' : 'jogadores'} aqui` : '';
+    const players = (st.net === 'online' ? ` · ${st.players} ${st.players === 1 ? 'jogador' : 'jogadores'} aqui` : '') +
+      (st.bots ? ` · 🤖 ${st.bots}` : '');
     $('stats').textContent = `${fmt(st.points)} pontos · ${fmt(st.eaten.words)} letras · ${fmt(st.eaten.enemies)} inimigos${players}` +
       (st.difficultyName ? ` · ⚔ ${st.difficultyName}` : '');
     if (st.difficultyName) {
