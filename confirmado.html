@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PageGame · Confirmação de e-mail</title>
+<style>
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#1b1913;color:#f1e9d0;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:16px;box-sizing:border-box}
+  .card{max-width:420px}
+  h1{font-size:1.5rem;margin:.2em 0 .5em}
+  .ico{font-size:3rem}
+  a{color:#ffd23f}
+  .muted{opacity:.75;font-size:.9rem}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="ico" id="ico">⏳</div>
+  <h1 id="title">Confirmando…</h1>
+  <p id="msg"></p>
+  <p class="muted"><a href="mobile/">Jogar no navegador</a></p>
+</div>
+<script>
+  // O Supabase manda para cá depois de validar o link do e-mail.
+  // Sucesso: #access_token=...&type=signup   Erro: #error=...&error_description=...
+  // (ou ?error=... / ?code=... dependendo do fluxo). O token não é usado aqui:
+  // a extensão guarda a sessão dela própria, então é só entrar com e-mail e senha.
+  const p = new URLSearchParams(location.hash.slice(1));
+  new URLSearchParams(location.search).forEach((v, k) => { if (!p.has(k)) p.set(k, v); });
+  history.replaceState(null, '', location.pathname); // tira o token da barra de endereço
+
+  const $ = (id) => document.getElementById(id);
+  const err = p.get('error_description') || p.get('error');
+  if (err) {
+    const expired = /expired|invalid/i.test(p.get('error_code') || err);
+    $('ico').textContent = '⚠️';
+    $('title').textContent = expired ? 'Link expirado ou já usado' : 'Não deu para confirmar';
+    $('msg').textContent = expired
+      ? 'Se você já tinha clicado nele antes, o e-mail já está confirmado: é só entrar na extensão. Senão, tente entrar e peça um novo link.'
+      : err;
+  } else {
+    const type = p.get('type');
+    $('ico').textContent = '✅';
+    $('title').textContent = type === 'recovery' ? 'Link de recuperação aceito' : 'E-mail confirmado!';
+    $('msg').textContent = 'Agora volte para o PageGame (ícone da extensão ou o app) e entre com seu e-mail e senha.';
+  }
+</script>
+</body>
+</html>
