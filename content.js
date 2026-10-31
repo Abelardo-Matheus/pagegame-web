@@ -570,7 +570,31 @@
     floaters.push({ text: `-${HIT_PENALTY}`, x: mx, y: my - 10, life: 1, good: false });
   }
 
-  const diff = () => DIFFICULTY[S.difficulty] || DIFFICULTY.normal;
+  // Dificuldade FIXA POR SALA: sai do nome da sala (o hash da página), então
+  // todo mundo na mesma página joga na mesma dificuldade, e ela não muda.
+  // 1 em 4 salas é Fácil, 2 em 4 Normal, 1 em 4 Difícil.
+  // Quanto mais jogadores na sala, menos palavras inimigas: o limite e o
+  // intervalo entre elas são divididos pelo "tamanho do grupo" (crowd).
+  const DIFF_BY_ROOM = ['facil', 'normal', 'normal', 'dificil'];
+  const DIFF_NAME = { facil: 'Fácil', normal: 'Normal', dificil: 'Difícil' };
+  let roomDiffKey = '', roomDiffVal = 'normal';
+  function roomDifficulty() {
+    const url = globalThis.PG_PAGE_URL || location.href;
+    if (url !== roomDiffKey) {
+      roomDiffKey = url;
+      try { roomDiffVal = DIFF_BY_ROOM[parseInt(roomNow().slice(0, 8), 16) % DIFF_BY_ROOM.length]; }
+      catch { roomDiffVal = 'normal'; }
+    }
+    return roomDiffVal;
+  }
+  // 1 jogador = 1; cada jogador a mais soma 0,5 (2 = 1,5; 3 = 2; 5 = 3...)
+  const crowd = () => 1 + 0.5 * (netState === 'online' ? peerCount : 0);
+  function diff() {
+    const base = DIFFICULTY[roomDifficulty()] || DIFFICULTY.normal;
+    const f = crowd();
+    if (f === 1) return base;
+    return { ...base, max: Math.max(1, Math.round(base.max / f)), spawn: [base.spawn[0] * f, base.spawn[1] * f] };
+  }
   const rand = (a, b) => a + Math.random() * (b - a);
   const points = () =>
     eaten.words + eaten.images * 5 + eaten.others * 3 + enemiesEaten * ENEMY_BONUS - hits * HIT_PENALTY;
@@ -986,6 +1010,9 @@
     return 'arma';
   }
   const TRANSFORM_COOLDOWN = 12000;
+  // com mais gente na sala: menos palavras transformadas e mais espaço entre elas
+  const transformMax = () => Math.max(1, Math.round(TRANSFORM_MAX / crowd()));
+  const transformCooldown = () => TRANSFORM_COOLDOWN * crowd();
   const PULL_CHANCE = 0.12;           // chance de um buraco puxar a letra que falta
   const PULL_COOLDOWN = 6000;
   let lastTransform = -1e9, lastPull = -1e9;
@@ -1003,8 +1030,8 @@
     if (p.length < 4 || p.length > 6) return;
     const type = ENEMY_BY_KEY.get(anagramKey(p));
     if (!type) return;
-    if (performance.now() - lastTransform < TRANSFORM_COOLDOWN) return;
-    if (enemies.filter((e) => e.msg.tr).length >= TRANSFORM_MAX) return;
+    if (performance.now() - lastTransform < transformCooldown()) return;
+    if (enemies.filter((e) => e.msg.tr).length >= transformMax()) return;
     const path = pathOf(node);
     if (!path || !d.rects || !d.rects[w * 4 + 2]) return;
     const T = WORD_ENEMIES[type];
@@ -1218,8 +1245,8 @@
       if (w < 0) continue;
       let src = null, hint = null;
       const canPull = S.enemies && hasHighlight && now - lastPull > PULL_COOLDOWN &&
-        now - lastTransform > TRANSFORM_COOLDOWN && Math.random() < PULL_CHANCE &&
-        enemies.filter((e) => e.msg.tr).length < TRANSFORM_MAX;
+        now - lastTransform > transformCooldown() && Math.random() < PULL_CHANCE &&
+        enemies.filter((e) => e.msg.tr).length < transformMax();
       if (canPull) {
         const st = wordState(q.node, q.d, w);
         const found = bestTarget(st.have, st.holes.length);
@@ -2991,6 +3018,7 @@
     }
     txt += `  |  ${weapon().icon} ${weapon().nome}`;
     if (hits) txt += `  |  levou ${fmt(hits)} ${hits === 1 ? 'tiro' : 'tiros'}`;
+    if (S.enemies) txt += `  |  ⚔ ${DIFF_NAME[roomDifficulty()]}`;
     if (netState === 'online') txt += peerCount ? `  |  ${peerCount + 1} jogando aqui` : '  |  só você aqui';
     hud.textContent = txt;
     updateBoard();
@@ -3270,7 +3298,8 @@
       ...extra,
       mounted, running, scanning: !!scan, highlightSupported: hasHighlight,
       found: { words: ix.words, images: ix.images, others: ix.others, nodes: ix.n },
-      eaten: { ...eaten, enemies: enemiesEaten }, hits, points: points(), scanMs: Math.round(scan ? scan.ms : lastScanMs),
+      eaten: { ...eaten, enemies: enemiesEaten }, hits, points: points(),
+      difficulty: roomDifficulty(), difficultyName: DIFF_NAME[roomDifficulty()], enemyMax: diff().max, scanMs: Math.round(scan ? scan.ms : lastScanMs),
       net: netState, players: netState === 'online' ? peerCount + 1 : 0,
       account: account && { total_score: account.total_score, coins: account.coins },
     };

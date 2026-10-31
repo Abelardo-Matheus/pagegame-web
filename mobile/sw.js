@@ -1,11 +1,11 @@
 // PageGame (app do celular): guarda os arquivos do app para abrir rápido e
 // funcionar instalado. Artigos da Wikipédia e o Supabase sempre vêm da rede.
-const CACHE = 'pagegame-v21';
+const CACHE = 'pagegame-v23';
 const SHELL = [
   './', './index.html', './app.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png',
   '../config.js', '../lib/supabase.js', '../platform.js', '../room.js', '../net.js',
-  '../content.js', '../content.css', '../inventory.js',
+  '../content.js', '../content.css', '../inventory.js', './apk.js',
 ];
 
 self.addEventListener('install', (e) => {

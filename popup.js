@@ -232,6 +232,11 @@ function render(st) {
   $('players').textContent = st.net === 'online'
     ? (st.players > 1 ? `${st.players} jogando nesta página` : 'só você nesta página')
     : NET[st.net] || '—';
+  if (st.difficultyName) {
+    $('players').textContent += ` · ⚔ ${st.difficultyName}`;
+    $('difficulty').textContent = `Esta página é ${st.difficultyName} (fixa para todos aqui). ` +
+      (st.players > 1 ? `Com ${st.players} jogadores: no máximo ${st.enemyMax} ${st.enemyMax === 1 ? 'inimiga' : 'inimigas'} por vez.` : 'Quanto mais jogadores, menos palavras inimigas.');
+  }
   const f = st.found, e = st.eaten;
   $('found').textContent = `${fmt(f.words)} palavras, ${fmt(f.images)} imagens, ${fmt(f.others)} outros`;
   $('eaten').textContent = `${fmt(e.words)} letras, ${fmt(e.images)} imagens, ${fmt(e.others)} outros` +
@@ -278,7 +283,6 @@ function paint() {
     $(key + 'Out').textContent = label(settings[key]);
   }
   for (const key of ['eatWords', 'eatImages', 'eatObjects', 'showLabels', 'multiplayer', 'enemies', 'peerBadge']) $(key).checked = settings[key];
-  for (const b of $('difficulty').children) b.setAttribute('aria-pressed', String(b.dataset.level === settings.difficulty));
   for (const b of $('character').children) b.setAttribute('aria-pressed', String(b.dataset.char === settings.character));
   $('char-hint').innerHTML = settings.character === 'saltador'
     ? 'Cai do topo e pula nas letras. <kbd>A</kbd><kbd>D</kbd> anda, <kbd>W</kbd> pula, <kbd>S</kbd> desce, <kbd>Shift</kbd> dash até o mouse, <kbd>Espaço</kbd> joga granada (quica nas letras). A arma atira sozinha, primeiro nos jogadores.'
@@ -296,11 +300,6 @@ $('character').addEventListener('click', (e) => {
   const c = e.target.closest('button');
   if (!c || !c.dataset.char) return;
   settings.character = c.dataset.char; paint(); save();
-});
-$('difficulty').addEventListener('click', (e) => {
-  const lv = e.target.dataset && e.target.dataset.level;
-  if (!lv) return;
-  settings.difficulty = lv; paint(); save();
 });
 $('colors').addEventListener('click', (e) => {
   const c = e.target.dataset && e.target.dataset.color;

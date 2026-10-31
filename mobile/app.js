@@ -29,7 +29,6 @@
 
   function paint() {
     for (const b of $('character').children) b.setAttribute('aria-pressed', String(b.dataset.char === settings.character));
-    for (const b of $('difficulty').children) b.setAttribute('aria-pressed', String(b.dataset.level === settings.difficulty));
     for (const b of $('lang').children) b.setAttribute('aria-pressed', String(b.dataset.lang === settings.lang));
     for (const b of $('colors').children) b.setAttribute('aria-pressed', String(b.dataset.color === settings.color));
     $('enemies').checked = settings.enemies;
@@ -45,7 +44,6 @@
     if (key === 'lang') findArticle();
   });
   pick('character', 'character', 'char');
-  pick('difficulty', 'difficulty', 'level');
   pick('lang', 'lang', 'lang');
   pick('colors', 'color', 'color');
   for (const k of ['enemies', 'multiplayer']) $(k).addEventListener('change', (e) => { settings[k] = e.target.checked; save(); });
@@ -208,7 +206,12 @@
     $('play').textContent = running ? '❚❚ Pausar' : (st && st.mounted ? '▶ Continuar' : '▶ Jogar');
     if (!st || !st.mounted) { $('stats').textContent = 'Abra um artigo e toque em Jogar.'; return; }
     const players = st.net === 'online' ? ` · ${st.players} ${st.players === 1 ? 'jogador' : 'jogadores'} aqui` : '';
-    $('stats').textContent = `${fmt(st.points)} pontos · ${fmt(st.eaten.words)} letras · ${fmt(st.eaten.enemies)} inimigos${players}`;
+    $('stats').textContent = `${fmt(st.points)} pontos · ${fmt(st.eaten.words)} letras · ${fmt(st.eaten.enemies)} inimigos${players}` +
+      (st.difficultyName ? ` · ⚔ ${st.difficultyName}` : '');
+    if (st.difficultyName) {
+      $('difficulty').textContent = `Este artigo é ${st.difficultyName} (fixo para todos aqui). ` +
+        (st.players > 1 ? `Com ${st.players} jogadores: no máximo ${st.enemyMax} ${st.enemyMax === 1 ? 'inimiga' : 'inimigas'} por vez.` : 'Quanto mais jogadores, menos palavras inimigas.');
+    }
   }
   setInterval(async () => render(await pgSend('status')), 1000);
   addEventListener('pagegame-state', async () => render(await pgSend('status')));   // jogo pausou/continuou
@@ -542,6 +545,50 @@
     // link direto para um artigo abre ele; senão vai para onde tem gente (ou aleatório)
     if (h) openArticle(h.lang, h.title, false); else findArticle();
   })();
+
+  // ---------- Atualização do APK ----------
+  // O APK sabe a versão dele (apk.js, gerado no build). Ao abrir (e ao voltar
+  // para o app, no máximo a cada 30 min) lê o version.json do GitHub; se a
+  // versão de lá for maior, mostra o aviso. "Atualizar" é um link para o APK:
+  // o app passa esse link para o navegador do celular (Client.smali), que
+  // baixa; depois o Android pergunta se quer instalar por cima.
+  const UPDATE_URL = 'https://raw.githubusercontent.com/Abelardo-Matheus/pagegame-web/main/version.json';
+  let lastUpdateCheck = 0, updateShown = 0;
+  async function checkUpdate() {
+    const me = globalThis.PG_APK;
+    if (!me || !me.code) return;                               // site / PWA: não tem APK para atualizar
+    if (Date.now() - lastUpdateCheck < 30 * 60 * 1000) return;
+    lastUpdateCheck = Date.now();
+    try {
+      const res = await fetchT(`${UPDATE_URL}?t=${Date.now()}`, 10000);
+      if (!res.ok) return;
+      const v = await res.json();
+      if (!(Number(v.code) > me.code) || !v.apk || updateShown === v.code) return;
+      updateShown = v.code;
+      showUpdate(v, me);
+    } catch { /* sem internet: tenta na próxima vez */ }
+  }
+  function showUpdate(v, me) {
+    let el = $('update-bar');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'update-bar'; el.className = 'update-bar'; el.setAttribute('data-pagegame-ui', '');
+      el.setAttribute('role', 'alert');
+      document.body.append(el);
+    }
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    el.innerHTML = `<div class="upd-text"><b>Nova versão ${esc(v.name || v.code)}</b>` +
+      `<small>Você está na ${esc(me.name || me.code)}.${v.notes ? ' ' + esc(v.notes) : ''}</small></div>` +
+      `<a class="upd-go" href="${esc(v.apk)}">Atualizar</a>` +
+      `<button class="upd-later" type="button" aria-label="Depois">✕</button>`;
+    el.hidden = false;
+    el.querySelector('.upd-go').addEventListener('click', () => {
+      el.querySelector('small').textContent = 'Baixando no navegador… quando terminar, toque no arquivo e em "Atualizar"/"Instalar".';
+    });
+    el.querySelector('.upd-later').addEventListener('click', () => { el.hidden = true; });
+  }
+  setTimeout(checkUpdate, 1500);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
 
   // instalar como app (funciona offline o menu; os artigos precisam de internet)
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
