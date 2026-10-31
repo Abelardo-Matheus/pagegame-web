@@ -1,4 +1,4 @@
-// PageGame v0.24: o bichinho come palavras, imagens e elementos de qualquer página.
+// PageGame v0.25: o bichinho come palavras, imagens e elementos de qualquer página.
 //
 // Como o scan fica leve mesmo em páginas enormes:
 //  1. Nada roda até o Play: o script só é injetado na aba quando você aperta Play.
@@ -2343,6 +2343,7 @@
   function drawShotsAndSlams(now) {
     const sx = scrollX, sy = scrollY;
     drawGrenades(now);
+    drawBotGrenades(now);
     ctx.save();
     for (const s of shots) {
       const Wp = WEAPONS[s.w] || WEAPONS.pistola;
@@ -2512,8 +2513,10 @@
   // - Sozinho você joga com alguns bots; cada jogador de verdade que entra
   //   tira um bot. Quantos bots e quão fortes eles são depende da
   //   dificuldade da sala (Fácil / Normal / Difícil).
-  // - Eles comem letras, crescem, atiram em você, dão trombada (e levam
-  //   trombada: as palavras do corpo deles caem para você comer) e entram
+  // - 5 tipos (BOT_TYPES): 3 minhocas (Comilão, Caçador, Pistoleiro) e 2
+  //   saltadores (Pulador, Granadeiro). A sala sorteia tipos diferentes.
+  // - Eles comem/quebram letras, atiram em você, as minhocas dão trombada
+  //   (e levam: as palavras do corpo caem para você comer) e todos entram
   //   no placar.
   // - Rede: só o anfitrião (menor id) mexe os bots. Ele manda a posição de
   //   todos num único evento {k:'bots'} a cada 250 ms; os outros desenham
@@ -2521,6 +2524,7 @@
   //   anfitrião com o id do bot ('bot:...'), igual a um jogador.
   //   Se o anfitrião sai, o próximo assume os bots que já estavam na sala.
   // =====================================================================
+  // Força pela dificuldade da sala:
   //   fill  = jogadores na sala contando os bots (você + bots)
   //   spd   = velocidade (1 = a do seu bicho)      turn = quanto vira por quadro
   //   aim   = erro da mira (rad)                   cad  = multiplica o intervalo entre tiros
@@ -2529,17 +2533,34 @@
   //   react = de quanto em quanto tempo decide (ms) dash = intervalo do dash na caça (0 = sem)
   //   look  = raio em que procura comida (px)      guns = armas que podem sortear
   const BOT_CFG = {
-    facil:   { fill: 3, spd: 0.70, turn: 0.07, aim: 0.50, cad: 3.4,  range: 0.5,  lead: 0,   hunt: 0.10, react: [1100, 1900], dash: 0,    look: 380, guns: ['pistola'] },
+    facil:   { fill: 3, spd: 0.70, turn: 0.07, aim: 0.55, cad: 4.2,  range: 0.45, lead: 0,   hunt: 0.10, react: [1100, 1900], dash: 0,    look: 380, guns: ['pistola'] },
     normal:  { fill: 4, spd: 0.90, turn: 0.10, aim: 0.22, cad: 2.0,  range: 0.75, lead: 0.5, hunt: 0.30, react: [650, 1200],  dash: 2600, look: 520, guns: ['pistola'] },
-    dificil: { fill: 5, spd: 1.10, turn: 0.14, aim: 0.07, cad: 1.15, range: 1,    lead: 1,   hunt: 0.60, react: [300, 700],   dash: 1600, look: 680, guns: ['pistola', 'metralhadora', 'espingarda', 'laser'] },
+    dificil: { fill: 5, spd: 1.10, turn: 0.14, aim: 0.06, cad: 1.0,  range: 1,    lead: 1,   hunt: 0.60, react: [300, 700],   dash: 1600, look: 680, guns: ['pistola', 'metralhadora', 'espingarda', 'laser'] },
   };
-  const BOT_NAMES = ['Traça', 'Cupim', 'Lagarta', 'Minhoca', 'Tatu', 'Besouro', 'Lesma', 'Grilo', 'Formiga', 'Joaninha'];
+  // Os 5 tipos. Os números multiplicam os da dificuldade (1 = igual).
+  //   kind  = 'w' minhoca / 'j' saltador          hunt = chance de caçar (0 = nunca)
+  //   eat   = quanto cresce por letra              keep = distância que tenta manter de você (px)
+  //   hop   = chance de pular à toa (por quadro)  stomp = raio que quebra letras ao cair (px)
+  //   gren  = intervalo entre granadas (ms)        guns = armas por dificuldade (senão as da dificuldade)
+  const BOT_TYPES = {
+    comilao:    { nome: 'Comilão',    kind: 'w', spd: 1.0,  hunt: 0.3, cad: 1.6, aim: 1.2, range: 0.9, eat: 1.6 },
+    cacador:    { nome: 'Caçador',    kind: 'w', spd: 1.12, hunt: 2.2, cad: 1.3, aim: 1.0, range: 0.9, eat: 1.0, dash: 0.6 },
+    pistoleiro: { nome: 'Pistoleiro', kind: 'w', spd: 0.95, hunt: 0,   cad: 0.85, aim: 0.7, range: 1.2, eat: 0.8, keep: 300,
+                  guns: { facil: ['pistola'], normal: ['pistola', 'laser'], dificil: ['laser'] } },
+    pulador:    { nome: 'Pulador',    kind: 'j', spd: 1.05, hunt: 0,   cad: 1.2, aim: 1.0, range: 0.9, hop: 0.035, stomp: 42 },
+    granadeiro: { nome: 'Granadeiro', kind: 'j', spd: 0.9,  hunt: 0,   cad: 2.2, aim: 1.0, range: 0.8, hop: 0.01, keep: 260, gren: 2600,
+                  guns: { facil: ['pistola'], normal: ['pistola'], dificil: ['pistola', 'espingarda'] } },
+  };
+  const BOT_TYPE_IDS = Object.keys(BOT_TYPES);
   const BOT_COLORS = ['#ff9f43', '#54a0ff', '#a29bfe', '#1dd1a1', '#ff6b81', '#feca57', '#f368e0', '#48dbfb'];
   const BOT_MAX_SEG = 60;
+  const BOT_GRAVITY = 0.42;
   const bots = [];                   // os bots que EU controlo (também estão em peers)
+  const botGrenades = [];            // granadas dos Granadeiros (coordenadas da página)
   let botSeq = 0, nextBotAt = 0, botSentAt = 0, botsWereSent = false;
   const isBot = (id) => typeof id === 'string' && id.startsWith('bot:');
   const botCfg = () => BOT_CFG[roomDifficulty()] || BOT_CFG.normal;
+  const botType = (b) => BOT_TYPES[b.btype] || BOT_TYPES.comilao;
   const botCount = () => { let n = 0; for (const p of peers.values()) if (p.bot) n++; return n; };
 
   // quantos bots a sala precisa agora
@@ -2565,40 +2586,58 @@
     }
     return out;
   }
-  // segmento i do corpo de um jogador (coordenadas da página)
+  // corpo de um jogador (coordenadas da página)
   const bodyOf = (u) => (u.me ? segs.map((s) => ({ x: s.x + scrollX, y: s.y + scrollY })) : u.p.segs);
   const scaleOf = (u) => (u.me ? scale() : u.p.scale);
 
-  function newBotAi(now, fromPeer) {
-    const C = botCfg();
+  function pickGun(type) {
+    const list = (type.guns && type.guns[roomDifficulty()]) || botCfg().guns;
+    return list[Math.floor(Math.random() * list.length)];
+  }
+  function newBotAi(now, b) {
+    const T = botType(b);
     return {
-      food: fromPeer ? Math.max(0, (fromPeer.n - 4) * 2) : 0,
-      words: fromPeer ? fromPeer.pts || 0 : 0, loot: 0, hits: 0,
+      food: b.kind === 'w' ? Math.max(0, (b.n - 4) * 2) : 0,
+      words: b.pts || 0, loot: 0, hits: 0,
       mode: 'eat', goal: null, thinkAt: 0, shotAt: now + 2000, dashAt: 0, dashUntil: 0,
-      shield: 0, hurt: 0, sh: [], hitCd: new Map(), carry: null,
-      gun: C.guns[Math.floor(Math.random() * C.guns.length)],
+      shield: 0, hurt: 0, sh: [], gr: [], hitCd: new Map(), carry: null,
+      gun: pickGun(T), grenAt: now + 3000,
+      vx: 0, vy: 0, onGround: false, dropUntil: 0, squash: 0, goalX: 0, goalY: 0,
     };
+  }
+
+  // a sala sorteia o tipo que tem menos bots (para ter variedade)
+  function chooseBotType() {
+    const count = {};
+    for (const t of BOT_TYPE_IDS) count[t] = 0;
+    for (const p of peers.values()) if (p.bot && count[p.btype] != null) count[p.btype]++;
+    const min = Math.min(...Object.values(count));
+    const free = BOT_TYPE_IDS.filter((t) => count[t] === min);
+    return free[Math.floor(Math.random() * free.length)];
   }
 
   function spawnBot(now) {
     const H = humans();
     const near = H[Math.floor(Math.random() * H.length)];
+    const btype = chooseBotType(), T = BOT_TYPES[btype];
     const side = Math.random() < 0.5 ? -1 : 1;
-    const x = clamp(near.x + side * rand(260, 480), 30, docW() - 30);
-    const y = clamp(near.y + rand(-220, 220), 30, docH() - 30);
-    const usedNames = new Set(), usedColors = new Set([S.color]);
-    for (const p of peers.values()) { usedNames.add(p.name); usedColors.add(p.color); }
-    const freeName = BOT_NAMES.filter((n) => !usedNames.has('🤖 ' + n));
-    const name = '🤖 ' + (freeName.length ? freeName[Math.floor(Math.random() * freeName.length)] : 'Bot ' + (botSeq + 1));
+    const x = clamp(near.x + side * rand(220, 420), 30, docW() - 30);
+    // minhoca entra pelo lado; saltador cai de cima
+    const y = T.kind === 'j' ? Math.max(JH, near.y - rand(220, 320)) : clamp(near.y + rand(-220, 220), 30, docH() - 30);
+    const used = new Set(), usedColors = new Set([S.color]);
+    for (const p of peers.values()) { used.add(p.name); usedColors.add(p.color); }
+    let name = '🤖 ' + T.nome;
+    for (let k = 2; used.has(name); k++) name = '🤖 ' + T.nome + ' ' + k;
     const color = BOT_COLORS.find((c) => !usedColors.has(c)) || BOT_COLORS[botSeq % BOT_COLORS.length];
     const id = 'bot:' + String(myId || 'local').slice(0, 6) + '-' + (++botSeq);
     const b = {
-      id, bot: true, local: true, kind: 'w', name, color,
+      id, bot: true, local: true, btype, kind: T.kind, name, color,
       segs: [{ x, y }], heading: side > 0 ? Math.PI : 0, scale: 1, mouthOpen: 0, speed: 0, t: 0,
-      labels: [], n: 4, pts: 0, iv: false, seen: now, target: { x, y }, targetHeading: 0,
-      ai: newBotAi(now),
+      labels: [], n: T.kind === 'j' ? 1 : 4, pts: 0, iv: false, seen: now, target: { x, y }, targetHeading: 0,
+      face: -side, onGround: false, squash: 0,
     };
-    while (b.segs.length < 4) b.segs.push({ x, y });
+    if (T.kind === 'w') while (b.segs.length < 4) b.segs.push({ x, y });
+    b.ai = newBotAi(now, b);
     bots.push(b);
     peers.set(id, b);
     floaters.push({ text: name + ' entrou', x, y: y - 24, life: 1, good: false });
@@ -2608,6 +2647,7 @@
   function adoptBot(id, p, now) {
     p.id = id;
     p.local = true;
+    if (!BOT_TYPES[p.btype]) p.btype = p.kind === 'j' ? 'pulador' : 'comilao';
     p.labels = Array.isArray(p.labels) ? p.labels : [];
     p.ai = newBotAi(now, p);
     bots.push(p);
@@ -2620,6 +2660,7 @@
   }
 
   function updateBots(now) {
+    updateBotGrenades(now);
     if (netState === 'connecting') return;                            // ainda não sabe se é o anfitrião
     if (!isHost()) {                                                   // outro mexe os bots
       if (bots.length) { for (const b of bots.splice(0)) peers.delete(b.id); }
@@ -2667,23 +2708,41 @@
   }
 
   function tickBot(b, H, now) {
-    const A = b.ai, C = botCfg(), h = b.segs[0];
+    const A = b.ai, h = b.segs[0];
     b.t++;
-    b.scale = 1 + Math.min(A.food, 400) / 120;
-    const R = 8 + 6 * b.scale;
-
     // jogador de verdade mais perto
     let tg = null, td = Infinity;
     for (const u of H) { const d = Math.hypot(u.x - h.x, u.y - h.y); if (d < td) { td = d; tg = u; } }
+    if (b.kind === 'j') tickJumperBot(b, now, tg, td);
+    else tickWormBot(b, now, tg, td);
+    b.iv = now < Math.max(A.shield, A.hurt);
+    botLoose(b, h.x, h.y, b.kind === 'j' ? 18 : 8 + 6 * b.scale, now);
+    botShoot(b, H, now);
+    if (b.kind === 'w') botRam(b, H, now);
+    else if (botType(b).gren) botGrenade(b, tg, td, now);
+    b.pts = Math.max(0, A.words + A.loot - A.hits * HIT_PENALTY);
+  }
+
+  // ---------- minhocas: Comilão, Caçador, Atirador ----------
+  function tickWormBot(b, now, tg, td) {
+    const A = b.ai, C = botCfg(), T = botType(b), h = b.segs[0];
+    b.scale = 1 + Math.min(A.food, 400) / 120;
+    const R = 8 + 6 * b.scale;
 
     if (tg && td > 900 && A.mode !== 'back') {                       // longe de todo mundo: volta
       A.mode = 'back';
       A.goal = { x: tg.x + rand(-200, 200), y: tg.y + rand(-150, 150) };
     } else if (now >= A.thinkAt || !A.goal || (A.mode === 'back' && td < 450)) {
       A.thinkAt = now + rand(C.react[0], C.react[1]);
-      const big = tg && (b.segs.length >= tg.n * 0.7 || roomDifficulty() === 'dificil');
-      A.mode = tg && !tg.j && !tg.iv && td < C.look * 1.4 && big && Math.random() < C.hunt ? 'hunt' : 'eat';
-      if (A.mode === 'eat') A.goal = findFood(b, tg);
+      const big = tg && (b.segs.length >= tg.n * 0.7 || roomDifficulty() === 'dificil' || b.btype === 'cacador');
+      const huntP = Math.min(0.95, C.hunt * T.hunt);
+      if (tg && !tg.j && !tg.iv && td < C.look * 1.4 && big && Math.random() < huntP) A.mode = 'hunt';
+      else if (T.keep && tg && td < T.keep * 1.6) {
+        // Pistoleiro: fica a uma distância boa para atirar, de lado
+        A.mode = 'keep';
+        const a = Math.atan2(h.y - tg.y, h.x - tg.x) + rand(-0.8, 0.8);
+        A.goal = { x: clamp(tg.x + Math.cos(a) * T.keep, 20, docW() - 20), y: clamp(tg.y + Math.sin(a) * T.keep, 20, docH() - 20) };
+      } else { A.mode = 'eat'; A.goal = findFood(b, tg); }
     }
 
     // para onde vai
@@ -2697,8 +2756,8 @@
     const dx = gx - h.x, dy = gy - h.y, dist = Math.hypot(dx, dy);
     const turn = C.turn * (A.mode === 'hunt' ? 1.25 : 1);
     b.heading = norm(b.heading + clamp(norm(Math.atan2(dy, dx) - b.heading), -turn, turn));
-    let sp = 3.4 * C.spd * (0.8 + b.scale * 0.3) * Math.min(1, dist / 60 + 0.35);
-    if (C.dash && A.mode === 'hunt' && dist < 200 && now > A.dashAt) { A.dashAt = now + C.dash; A.dashUntil = now + 260; }
+    let sp = 3.4 * C.spd * T.spd * (0.8 + b.scale * 0.3) * Math.min(1, dist / 60 + 0.35);
+    if (C.dash && A.mode === 'hunt' && dist < 200 && now > A.dashAt) { A.dashAt = now + C.dash * (T.dash || 1); A.dashUntil = now + 260; }
     if (now < A.dashUntil) sp = Math.max(sp, 3.4 * 3);
     b.speed += (sp - b.speed) * 0.15;
     h.x = clamp(h.x + Math.cos(b.heading) * b.speed, R, docW() - R);
@@ -2716,19 +2775,179 @@
     }
     b.n = b.segs.length;
     b.mouthOpen = Math.max(0, b.mouthOpen - 0.08);
-    b.iv = now < Math.max(A.shield, A.hurt);
-
     botEat(b, h.x, h.y, R);
-    botLoose(b, h.x, h.y, R, now);
-    botShoot(b, H, now);
-    botRam(b, H, now);
-    b.pts = Math.max(0, A.words + A.loot - A.hits * HIT_PENALTY);
   }
 
-  // o bot come as letras que encostam na boca (igual ao seu bicho)
+  // ---------- saltadores: Pulador, Granadeiro ----------
+  // Mesma física do seu saltador: gravidade e letras como plataformas de
+  // mão única. segs[0] = centro do corpo (os pés ficam JH/2 abaixo).
+  function tickJumperBot(b, now, tg, td) {
+    const A = b.ai, C = botCfg(), T = botType(b), h = b.segs[0];
+    let fy = h.y + JH / 2;                                            // pés
+    // longe de todo mundo (ou caiu da página): cai de novo perto de alguém
+    if (tg && (td > 1100 || fy > docH() + 200)) {
+      h.x = clamp(tg.x + rand(-260, 260), JW, docW() - JW);
+      fy = Math.max(JH, tg.y - rand(220, 320)); A.vy = 0; A.vx = 0;
+    }
+    if (tg && now >= A.thinkAt) {
+      A.thinkAt = now + rand(C.react[0], C.react[1]);
+      if (T.keep) {                                                   // Granadeiro: fica de lado, a uma distância boa
+        const side = Math.sign(h.x - tg.x) || (Math.random() < 0.5 ? -1 : 1);
+        A.goalX = tg.x + side * rand(T.keep * 0.7, T.keep * 1.2);
+      } else A.goalX = tg.x + rand(-260, 260);                        // Pulador: pula em volta de você
+      A.goalX = clamp(A.goalX, JW, docW() - JW);
+      A.goalY = tg.y + rand(-120, 60);
+    }
+    const dx = A.goalX - h.x;
+    const want = Math.abs(dx) > 14 ? Math.sign(dx) * 4.2 * C.spd * T.spd : 0;
+    A.vx += (want - A.vx) * (A.onGround ? 0.3 : 0.12);
+    if (want) b.face = Math.sign(want);
+    else if (tg) b.face = Math.sign(tg.x - h.x) || b.face;           // parado: olha para você
+    if (A.onGround) {
+      const above = A.goalY < fy - 40, below = A.goalY > fy + 90;
+      if ((above && Math.random() < 0.08) || Math.random() < (T.hop || 0)) {
+        A.vy = -11.5; A.onGround = false; A.squash = -0.25;
+      } else if (below && Math.random() < 0.04) { A.dropUntil = now + 260; A.onGround = false; }
+    }
+    h.x = clamp(h.x + A.vx, JW / 2, docW() - JW / 2);
+    const prev = fy;
+    A.vy = Math.min(A.vy + 0.55, 14);
+    let ny = fy + A.vy, landed = false;
+    if (A.vy >= 0 && now > A.dropUntil) {
+      const top = platformBetween(h.x - JW / 2 + 4, h.x + JW / 2 - 4, prev - 1, ny + 1);
+      if (top !== null) {
+        if (!A.onGround && A.vy > 4) A.squash = Math.min(0.35, A.vy / 30);
+        if (T.stomp && !A.onGround && A.vy > 6) botBreak(b, h.x, top, T.stomp);   // Pulador: cai quebrando letras
+        ny = top; A.vy = 0; landed = true;
+      }
+    }
+    fy = ny; A.onGround = landed;
+    if (fy - JH < 0) { fy = JH; A.vy = Math.max(A.vy, 0); }
+    A.squash *= 0.8;
+    h.y = fy - JH / 2;
+    b.speed = Math.abs(A.vx); b.onGround = landed; b.squash = A.squash;
+    b.heading = b.face > 0 ? 0 : Math.PI;
+    b.n = 1;
+  }
+
+  // explosão / pisão de bot: quebra as letras num círculo (os pontos vão para o bot)
+  function botBreak(b, cx, cy, R) {
+    slams.push({ x: cx, y: cy, born: performance.now(), r: R });
+    if (!S.eatWords || !hasHighlight) return;
+    const ix = index, R2 = R * R, A = b.ai;
+    stamp++;
+    for (let gx = Math.floor((cx - R) / CELL); gx <= Math.floor((cx + R) / CELL); gx++) {
+      for (let gy = Math.floor((cy - R) / CELL); gy <= Math.floor((cy + R) / CELL); gy++) {
+        const list = ix.grid.get(cellKey(gx, gy));
+        if (!list) continue;
+        for (const id of list) {
+          if (id >= OBJ || chunkStamp[id] === stamp) continue;
+          chunkStamp[id] = stamp;
+          const r = ix.rects;
+          if (!circleHitsRect(cx, cy, R, r[id * 4], r[id * 4 + 1], r[id * 4 + 2], r[id * 4 + 3])) continue;
+          const node = ix.nodes[id];
+          if (!node.isConnected) continue;
+          const d = wordsOf(node);
+          if (!d.left || !d.rects) continue;
+          for (let w = 0; w < d.starts.length; w++) {
+            const wr = d.rects;
+            if (!d.wl[w] || !wr[w * 4 + 2] || !circleHitsRect(cx, cy, R, wr[w * 4], wr[w * 4 + 1], wr[w * 4 + 2], wr[w * 4 + 3])) continue;
+            const L = lettersOf(node, d, w), lr = L.rects;
+            let changed = false;
+            for (let k = 0; k < L.offs.length; k++) {
+              const o = L.offs[k];
+              if (d.ate[o] || !lr[k * 4 + 2]) continue;
+              const lx = lr[k * 4] + lr[k * 4 + 2] / 2, ly = lr[k * 4 + 1] + lr[k * 4 + 3] / 2;
+              if ((lx - cx) ** 2 + (ly - cy) ** 2 > R2) continue;
+              hideLetter(node, d, w, o, L.lens[k]);
+              shareEat(node, o);
+              A.words++;
+              changed = true;
+            }
+            if (changed) wordChanged(node, d, w, 'comeu', false);
+          }
+        }
+      }
+    }
+  }
+
+  // Granadeiro: joga uma granada em arco que cai em cima de você
+  function botGrenade(b, tg, td, now) {
+    const A = b.ai, C = botCfg(), T = botType(b);
+    if (!tg || tg.iv || now < A.grenAt || td > 480 || td < 60) { if (now >= A.grenAt) A.grenAt = now + 400; return; }
+    A.grenAt = now + T.gren * C.cad / 2 * rand(0.85, 1.2);
+    const h = b.segs[0];
+    const dx = tg.x - h.x, dy = tg.y - h.y;
+    const t = clamp(Math.abs(dx) / 6.5, 22, 60);                      // quadros até cair em você
+    let vx = dx / t, vy = (dy - 0.5 * BOT_GRAVITY * t * t) / t;
+    vx *= 1 + rand(-1, 1) * C.aim;                                    // erra mais no Fácil
+    const sp = Math.hypot(vx, vy);
+    if (sp > 14) { vx *= 14 / sp; vy *= 14 / sp; }
+    vx = +vx.toFixed(2); vy = +vy.toFixed(2);
+    botGrenades.push({ x: h.x, y: h.y - 6, vx, vy, born: now, spin: 0, color: b.color, owner: b });
+    A.gr.push([vx, vy]);
+    A.squash = 0.12;
+  }
+
+  // granadas dos bots: as minhas explodem de verdade; as que vieram pela rede só aparecem
+  function updateBotGrenades(now) {
+    for (let i = botGrenades.length - 1; i >= 0; i--) {
+      const g = botGrenades[i];
+      if (now - g.born > GRENADE_FUSE) {
+        botGrenades.splice(i, 1);
+        if (g.owner && g.owner.local && bots.includes(g.owner)) botExplode(g.owner, g.x, g.y - 5, now);
+        else slams.push({ x: g.x, y: g.y - 5, born: now, r: SLAM_R * 0.8 });
+        continue;
+      }
+      const prev = g.y;
+      g.vy = Math.min(g.vy + BOT_GRAVITY, 15);
+      g.x += g.vx; g.y += g.vy; g.spin += g.vx * 0.09;
+      if (g.x < 5) { g.x = 5; g.vx = Math.abs(g.vx) * 0.6; }
+      else if (g.x > docW() - 5) { g.x = docW() - 5; g.vx = -Math.abs(g.vx) * 0.6; }
+      if (g.vy >= 0) {
+        const top = platformBetween(g.x - 8, g.x + 8, prev - 1, g.y + 1);
+        if (top !== null) {
+          g.y = top;
+          if (g.vy > 2.2) { g.vy = -g.vy * 0.42; g.vx *= 0.7; }
+          else { g.vy = 0; g.vx *= 0.6; if (Math.abs(g.vx) < 0.25) g.vx = 0; }
+        }
+      }
+      if (g.y > docH() + 100) botGrenades.splice(i, 1);
+    }
+  }
+  function botExplode(b, x, y, now) {
+    const R = SLAM_R * 0.8;
+    botBreak(b, x, y, R);
+    // machuca quem estiver perto (eu e os outros jogadores de verdade)
+    const me = gunPos();
+    if (Math.hypot(me.x - x, me.y - y) < R + 10) { hurtMe(now, me.x, me.y); sendMyPosition(true); }
+    for (const [id, p] of peers) {
+      if (p.bot || p.iv) continue;
+      if (Math.hypot(p.segs[0].x - x, p.segs[0].y - y) < R + 10) { netEvent({ k: 'ph', v: id, w: 'bazuca' }); p.iv = true; }
+    }
+  }
+  function drawBotGrenades(now) {
+    if (!botGrenades.length) return;
+    const sx = scrollX, sy = scrollY;
+    for (const g of botGrenades) {
+      const x = g.x - sx, y = g.y - sy - 5.5, left = 1 - (now - g.born) / GRENADE_FUSE;
+      if (x < -20 || y < -20 || x > innerWidth + 20 || y > innerHeight + 20) continue;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(g.spin);
+      ctx.fillStyle = '#2f3b22'; ctx.strokeStyle = LINE; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(0, 0, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = g.color || '#d7263d'; ctx.fillRect(-5.5, -1.3, 11, 2.6);
+      ctx.restore();
+      if (Math.floor((now - g.born) / Math.max(50, 220 * left)) % 2) {
+        ctx.fillStyle = '#ff5a1f';
+        ctx.beginPath(); ctx.arc(x + 2, y - 7, 2.6, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+
+  // a minhoca-bot come as letras que encostam na boca (igual ao seu bicho)
   function botEat(b, hx, hy, R) {
     if (!S.eatWords || !hasHighlight) return;
-    const ix = index, A = b.ai;
+    const ix = index, A = b.ai, eatK = botType(b).eat || 1;
     stamp++;
     const x0 = Math.floor((hx - R) / CELL), x1 = Math.floor((hx + R) / CELL);
     const y0 = Math.floor((hy - R) / CELL), y1 = Math.floor((hy + R) / CELL);
@@ -2756,7 +2975,7 @@
             if (!circleHitsRect(hx, hy, R, lr[k * 4], lr[k * 4 + 1], lr[k * 4 + 2], lr[k * 4 + 3])) continue;
             hideLetter(node, d, w, o, L.lens[k]);
             shareEat(node, o);
-            A.words++; A.food += 0.3; b.mouthOpen = 1;
+            A.words++; A.food += 0.3 * eatK; b.mouthOpen = 1;
             const ch = node.data.slice(o, o + L.lens[k]);
             const key = id + ':' + w;
             if (A.carry === key && b.labels.length) b.labels[0] = (b.labels[0] + ch).slice(-14);
@@ -2778,8 +2997,8 @@
       if (Math.abs(l.x - hx) < half + R && Math.abs(l.y - hy) < 8 + R) {
         loose.splice(i, 1);
         const pts = Math.max(1, [...l.text].length);
-        b.ai.loot += pts; b.ai.food += pts * 0.3; b.mouthOpen = 1;
-        b.labels.unshift(l.text); if (b.labels.length > 40) b.labels.pop();
+        b.ai.loot += pts; b.mouthOpen = 1;
+        if (b.kind === 'w') { b.ai.food += pts * 0.3; b.labels.unshift(l.text); if (b.labels.length > 40) b.labels.pop(); }
         netEvent({ k: 'pick', id: l.id });
       }
     }
@@ -2787,20 +3006,21 @@
 
   // o bot atira no jogador de verdade mais perto (mira pior no Fácil)
   function botShoot(b, H, now) {
-    const A = b.ai, C = botCfg();
+    const A = b.ai, C = botCfg(), T = botType(b);
     if (now < A.shotAt) return;
     const W = WEAPONS[A.gun] || WEAPONS.pistola, h = b.segs[0];
-    let tg = null, td = W.range * C.range;
+    let tg = null, td = W.range * C.range * T.range;
     for (const u of H) {
       if (u.iv) continue;
       const d = Math.hypot(u.x - h.x, u.y - h.y);
       if (d < td) { td = d; tg = u; }
     }
     if (!tg) { A.shotAt = now + 300; return; }
-    A.shotAt = now + W.cad * C.cad * rand(0.85, 1.25);
+    A.shotAt = now + W.cad * C.cad * T.cad * rand(0.85, 1.25);
     const tt = td / W.spd;                                             // quadros até chegar
     const px = tg.x + Math.cos(tg.h) * tg.v * tt * C.lead, py = tg.y + Math.sin(tg.h) * tg.v * tt * C.lead;
-    const ang = Math.atan2(py - h.y, px - h.x) + (Math.random() - 0.5) * 2 * C.aim;
+    const ang = Math.atan2(py - h.y, px - h.x) + (Math.random() - 0.5) * 2 * C.aim * T.aim;
+    if (b.kind === 'j') b.aim = ang;
     spawnShots(h.x, h.y, ang, A.gun, false, b.id);
     A.sh.push(+ang.toFixed(2));
   }
@@ -2850,10 +3070,10 @@
     return false;
   }
 
-  // levou trombada: as palavras do corpo do bot saem voando
+  // levou trombada: as palavras do corpo do bot saem voando (só minhoca)
   function botDrop(b, now) {
     const A = b.ai;
-    if (!A || now < A.shield) return;
+    if (!A || b.kind === 'j' || now < A.shield) return;
     A.shield = now + 3000;
     A.thinkAt = 0; A.mode = 'eat';
     const k = Math.min(b.labels.length, 12);                         // menos que um jogador: não enche a tela
@@ -2891,9 +3111,9 @@
     if (b && b.local) botHurt(b, now); else netEvent({ k: 'ph', v: id, w });
   }
 
-  // anfitrião: manda a posição dos bots (e os tiros deles) para a sala
+  // anfitrião: manda a posição dos bots (e os tiros e granadas deles) para a sala
   function botBroadcast(now) {
-    if (netState !== 'online') { for (const b of bots) b.ai.sh.length = 0; return; }
+    if (netState !== 'online') { for (const b of bots) { b.ai.sh.length = 0; b.ai.gr.length = 0; } return; }
     if (now < botSentAt || (!bots.length && !botsWereSent)) return;
     botSentAt = now + 250;
     botsWereSent = bots.length > 0;
@@ -2902,7 +3122,8 @@
       b: bots.map((b) => ({
         id: b.id, a: toAnchor(b.segs[0].x, b.segs[0].y), h: +b.heading.toFixed(2), n: b.segs.length,
         s: +b.scale.toFixed(2), c: b.color, u: b.name, pt: b.pts, iv: b.iv ? 1 : 0,
-        w: b.ai.gun, sh: b.ai.sh.splice(0, 8), lb: b.labels.slice(0, 8),
+        k: b.kind, f: b.face, ty: b.btype,
+        w: b.ai.gun, sh: b.ai.sh.splice(0, 8), gr: b.ai.gr.splice(0, 3), lb: b.kind === 'w' ? b.labels.slice(0, 8) : undefined,
       })),
     });
   }
@@ -2910,19 +3131,27 @@
   // não sou o anfitrião: desenho os bots dele como jogadores
   function onBots(m) {
     if (!Array.isArray(m.b) || isHost()) return;
+    const now = performance.now();
     const seen = new Set();
     for (const x of m.b.slice(0, 8)) {
       if (!x || !isBot(x.id) || !x.a) continue;
       seen.add(x.id);
-      onPeerPos({ id: x.id, a: x.a, h: x.h, n: x.n, s: x.s, c: x.c, pt: x.pt, iv: x.iv, k: 'w' });
+      onPeerPos({ id: x.id, a: x.a, h: x.h, n: x.n, s: x.s, c: x.c, pt: x.pt, iv: x.iv, k: x.k === 'j' ? 'j' : 'w', f: x.f });
       const p = peers.get(x.id);
       if (!p) continue;
       p.bot = true;
+      p.btype = BOT_TYPES[x.ty] ? x.ty : (p.kind === 'j' ? 'pulador' : 'comilao');
       p.name = String(x.u || '🤖 Bot').slice(0, 24);
       p.labels = Array.isArray(x.lb) ? x.lb.slice(0, 8).map((s) => String(s).slice(0, 14)) : null;
       if (Array.isArray(x.sh)) {
         const w = WEAPONS[x.w] ? x.w : 'pistola';
         for (const a of x.sh.slice(0, 8)) spawnShots(p.segs[0].x, p.segs[0].y, +a || 0, w, false);
+      }
+      if (Array.isArray(x.gr)) {
+        for (const g of x.gr.slice(0, 3)) {
+          if (!Array.isArray(g)) continue;
+          botGrenades.push({ x: p.segs[0].x, y: p.segs[0].y - 6, vx: +g[0] || 0, vy: +g[1] || 0, born: now, spin: 0, color: p.color, owner: null });
+        }
       }
     }
     for (const [id, p] of peers) if (p.bot && !p.local && !seen.has(id)) peers.delete(id);
@@ -3111,7 +3340,7 @@
       const h = p.segs[0];
       if (h.x - sx < -600 || h.x - sx > innerWidth + 600 || h.y - sy < -600 || h.y - sy > innerHeight + 600) continue;
       p.alpha = p.iv ? blink : 1;
-      if (p.kind === 'j') drawJumper({ x: h.x - sx, y: h.y - sy, color: p.color, face: p.face || 1, t: p.t, moving: p.speed > 0.5, onGround: true, name: p.name, alpha: p.alpha });
+      if (p.kind === 'j') drawJumper({ x: h.x - sx, y: h.y - sy, color: p.color, face: p.face || 1, aim: p.aim, squash: p.squash || 0, t: p.t, moving: p.speed > 0.5, onGround: p.onGround !== false, name: p.name, alpha: p.alpha });
       else drawCreature(p, -sx, -sy);
     }
 
@@ -3384,7 +3613,7 @@
   }
 
   async function mpDisconnect() {
-    peers.clear(); peerCount = 0; roomIds.clear(); bots.length = 0; botsWereSent = false;
+    peers.clear(); peerCount = 0; roomIds.clear(); bots.length = 0; botGrenades.length = 0; botsWereSent = false;
     netState = 'off';
     if (window.__pgNet) await window.__pgNet.disconnect();
   }
